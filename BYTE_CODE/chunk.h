@@ -20,6 +20,8 @@ typedef enum {
     OP_DEBUG_OFF,
     OP_CONSTANT,
     OP_POP,
+    OP_BEGIN_SCOPE,
+    OP_END_SCOPE,
 
     // VARIABLE
     OP_DEFINE_VARIABLE,

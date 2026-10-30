@@ -36,6 +36,7 @@ print_(f"%s{***ptr3}");
 */
 
 
+/*
 debug
 mem slot _8byteU age = 42
 off_debug
@@ -44,3 +45,15 @@ mem const _8byteF money = 54546.667
 
 console age
 console money
+*/
+
+
+{
+    mem slot _8byteF money = 55.5
+    console money
+    {
+        console money 
+    }
+}
+
+// console money

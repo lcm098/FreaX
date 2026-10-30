@@ -46,6 +46,7 @@ static Chunk *compiling_chunk;
 static void expression(void);
 static ParseRule *get_rule(TokenType type);
 static void parse_precedence(Precedence precedence);
+static void statement(void);
 
 static Chunk *current_chunk(void)
 {
@@ -403,6 +404,28 @@ void allocate_variable_memory() {
     }
 }
 
+bool is_at_end()
+{
+    return parser.current.type  == TOKEN_EOF;
+}
+
+void consume_new_block()
+{
+    emit_byte(OP_BEGIN_SCOPE);
+
+    while (peek() != TOKEN_RIGHT_BRACE && !is_at_end()) {
+        statement();
+    }
+
+    if (is_at_end()) {
+        error("Expect '}' after block.");
+        return;
+    }
+
+    advance();
+    emit_byte(OP_END_SCOPE);
+}
+
 void console_expression()
 {
     expression();
@@ -441,6 +464,10 @@ static void statement(void)
 
     else if (match(TOKEN_OFF_DEBUG)) {
         compiler_disable_debug();
+    }
+
+    else if (match(TOKEN_LEFT_BRACE)) {
+        consume_new_block();
     }
 
     else

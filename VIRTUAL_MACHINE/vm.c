@@ -135,6 +135,22 @@ if (debug_trace_execution) {
             break;
         }
 
+        case OP_BEGIN_SCOPE: {
+            Environment *environment = new_environment(vm.current_environment);
+            if (environment == NULL)
+                return INTERPRET_RUNTIME_ERROR;
+            vm.current_environment = environment;
+            break;
+        }
+
+        case OP_END_SCOPE: {
+
+            Environment *enclosing = vm.current_environment->enclosing;
+            destroy_environment(vm.current_environment);
+            vm.current_environment = enclosing;
+            break;
+        }
+
         case OP_GET_VARIBLE: {
             Value var_name = READ_CONSTANT();
             Value var_value = get_entry(vm.current_environment, var_name.value._string);

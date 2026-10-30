@@ -71,6 +71,12 @@ int disassemble_instruction(Chunk *chunk, int offset) {
     case OP_DIVIDE:
       return simple_instruction("OP_DIVIDE", offset);
 
+    case OP_BEGIN_SCOPE:
+        return simple_instruction("OP_BEGIN_SCOPE", offset);
+
+    case OP_END_SCOPE:
+        return simple_instruction("OP_END_SCOPE", offset);
+
     case OP_DEBUG_OFF:
         return simple_instruction("OP_DEBUG_OFF", offset);
 
