@@ -1,0 +1,43 @@
+
+/*
+
+ptr -> ptr ka assign kiya gaya address
+&ptr -> ptr ka apna address
+*ptr -> ptr ke assign kiya gaya address ki value
+
+
+Is example mein:
+
+ptr → 1000, yaani name ka address.
+&ptr → 2000, yaani ptr variable ka address.
+*ptr → 'd', yaani name[0] ki value.
+
+
+*/
+
+
+/*
+define void bar(*[_1byteC]ptr) {
+    print_(f"%s{ptr}")
+}
+
+_1byteC name[] = "danishk";
+
+_8byteU *[_1byteC]ptr = name;
+bar(ptr);
+
+_8byteU **[_1byteC]ptr2 = &ptr;
+_8byteU ***[_1byteC]ptr3 = &ptr2;
+
+print_(f"%s{*ptr}");
+print_(f"%s{**ptr2}");
+print_(f"%s{***ptr3}");
+
+*/
+
+
+mem slot _8byteU age = 42
+mem const _8byteF money = 54546.667
+
+console age
+console money
