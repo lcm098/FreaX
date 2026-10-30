@@ -409,6 +409,16 @@ void console_expression()
     emit_byte(OP_PRINT);
 }
 
+void compiler_enable_debug()
+{
+    emit_byte(OP_DEBUG_ON);
+}
+
+void compiler_disable_debug()
+{
+    emit_byte(OP_DEBUG_OFF);
+}
+
 /**********************************************************************/
 /*    STATEMENTS                                                      */
 /**********************************************************************/
@@ -423,6 +433,14 @@ static void statement(void)
 
     else if (match(TOKEN_CONSOLE)) {
         console_expression();
+    }
+
+    else if (match(TOKEN_DEBUG)) {
+        compiler_enable_debug();
+    }
+
+    else if (match(TOKEN_OFF_DEBUG)) {
+        compiler_disable_debug();
     }
 
     else

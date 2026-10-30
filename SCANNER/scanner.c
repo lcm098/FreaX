@@ -174,6 +174,7 @@ static TokenType identifier_type(){
         return check_keyword(1, 6, "onsole", TOKEN_CONSOLE);
     }
     case 'm': return check_keyword(1, 2, "em", TOKEN_MEMORY);
+    case 'd': return check_keyword(1, 4, "ebug", TOKEN_DEBUG);
     case '_': {
         TokenType tok = check_keyword(1, 6, "8byteU", TOKEN_8BYTEU);
         if (tok != TOKEN_IDENTIFIER) {
@@ -181,7 +182,7 @@ static TokenType identifier_type(){
         }
         return check_keyword(1, 6, "8byteF", TOKEN_8BYTEF);
     }
-
+    case 'o': return check_keyword(1, 8, "ff_debug", TOKEN_OFF_DEBUG);
     case 's': return check_keyword(1, 3, "lot", TOKEN_SLOT);
 
     }
