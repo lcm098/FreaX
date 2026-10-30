@@ -10,16 +10,20 @@ static InterpretResult run() {
 #define READ_BYTE() (*vm.ip++)
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
 
-#define BINARY_OP(op)                                               \
-do {                                                                \
-    Value b = pop();                                                \
-    Value a = pop();                                                \
-    if (a.type == _8byteU && b.type == _8byteU) {                   \
-        push(_8byteU(a.value._8byteU op b.value._8byteU));         \
-    } else {                                                        \
-        push(_8byteF(value_to_double(a) op value_to_double(b)));    \
-    }                                                               \
-} while(false)
+#define BINARY_OP(op)                                                   \
+do {                                                                    \
+    Value b = pop();                                                    \
+    Value a = pop();                                                    \
+                                                                        \
+    if (a.type == _8byteU && b.type == _8byteU) {                       \
+        push(_8byteU(a.value._8byteU op b.value._8byteU));              \
+    } else if (a.type == _8byteF && b.type == _8byteF) {                \
+        push(_8byteF(a.value._8byteF op b.value._8byteF));              \
+    } else {                                                            \
+        fprintf(stderr, "Type mismatch in binary operation.\n");       \
+        exit(EXIT_FAILURE);                                             \
+    }                                                                   \
+} while (false)
 
 
 if (debug_trace_execution) {
@@ -28,8 +32,6 @@ if (debug_trace_execution) {
 }
 
     for(;;) {
-
-
 
         if (debug_trace_execution) {
             printf("STACK=[\n");

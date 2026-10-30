@@ -9,6 +9,8 @@
 #include <limits.h>
 #include <errno.h>
 #include <ctype.h>
+#include <quadmath.h>
+#include <inttypes.h>
 
 #include <stdio.h>
 #include <stdbool.h>
