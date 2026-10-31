@@ -83,6 +83,9 @@ int disassemble_instruction(Chunk *chunk, int offset) {
     case OP_CONSTANT_VAR:
         return constant_instruction("OP_CONSTANT_VAR", offset, chunk);
 
+    case OP_JUMP:
+        return constant_instruction("OP_JUMP", offset, chunk);
+
     case OP_MUTABLE_VAR:
         return constant_instruction("OP_MUTABLE_VAR", offset, chunk);
 

@@ -286,43 +286,5 @@ int main(int argc, const char *argv[]) {
 
     free_vm();
 
-
-    /* (void)argc; */
-    /* (void)argv; */
-
-    /* init_vm(); */
-    /* Chunk chunk; */
-    /* init_chunk(&chunk); */
-
-    /* int idx = add_constant(&chunk, _8byteF(33)); */
-    /* write_chunk(&chunk, OP_CONSTANT, 123); */
-    /* write_chunk(&chunk, idx, 123); */
-
-    /* write_chunk(&chunk, OP_NEGATE, 123); */
-    /* write_chunk(&chunk, OP_PRINT, 123); */
-
-    /* // DEBUG */
-    /* write_chunk(&chunk, OP_DEBUG_ON, 122); */
-
-    /* // 10 */
-    /* idx = add_constant(&chunk, _8byteF(10)); */
-    /* write_chunk(&chunk, OP_CONSTANT, 235); */
-    /* write_chunk(&chunk, idx, 235); */
-
-    /* // 20 */
-    /* idx = add_constant(&chunk, _8byteF(20)); */
-    /* write_chunk(&chunk, OP_CONSTANT, 235); */
-    /* write_chunk(&chunk, idx, 236); */
-
-    /* // SUBTRACTING and printing */
-    /* write_chunk(&chunk, OP_SUBTRACT, 235); */
-    /* write_chunk(&chunk, OP_PRINT, 235); */
-
-    /* write_chunk(&chunk, OP_RETURN, 234); */
-
-    /* interpret(&chunk); */
-    /* free_vm(); */
-    /* free_chunk(&chunk); */
-
     return 0;
 }

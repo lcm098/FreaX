@@ -13,6 +13,24 @@ typedef struct {
 
 } Parser;
 
+/*
+
+    COMPILE TIME LABEL JUMP EVALUATOR
+*/
+typedef struct
+{
+    char *name;
+    uint32_t address;
+} CompilerLabel;
+
+typedef struct
+{
+    char *name;
+    size_t operand_offset;
+    int line;
+} PendingJump;
+
+
 /* ------------------------------------------------------------------ */
 /*  Pratt parser types                                                */
 /* ------------------------------------------------------------------ */
@@ -47,6 +65,112 @@ static void expression(void);
 static ParseRule *get_rule(TokenType type);
 static void parse_precedence(Precedence precedence);
 static void statement(void);
+static Chunk *current_chunk(void);
+static void error(const char *message);
+
+static CompilerLabel *labels = NULL;
+static size_t label_count = 0;
+static size_t label_capacity = 0;
+
+static PendingJump *pending_jumps = NULL;
+static size_t pending_jump_count = 0;
+static size_t pending_jump_capacity = 0;
+
+/**********************************************************************************/
+/*          BACK PACHING           */
+
+static char *copy_name(const char *text, size_t length)
+{
+    char *copy = malloc(length + 1);
+    if (copy == NULL) return NULL;
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+static void reset_label_tables(void)
+{
+    for (size_t i = 0; i < label_count; i++)        free(labels[i].name);
+    for (size_t i = 0; i < pending_jump_count; i++) free(pending_jumps[i].name);
+    free(labels);        labels = NULL;        label_count = label_capacity = 0;
+    free(pending_jumps); pending_jumps = NULL; pending_jump_count = pending_jump_capacity = 0;
+}
+
+static CompilerLabel *find_label(const char *name)
+{
+    for (size_t i = 0; i < label_count; i++)
+        if (strcmp(labels[i].name, name) == 0)
+            return &labels[i];
+    return NULL;
+}
+
+static void define_label(Token id)
+{
+    char *name = copy_name(id.start, (size_t)id.length);
+    if (name == NULL) { error("Memory allocation failed."); return; }
+
+    if (find_label(name)) {
+        error("Duplicate label.");
+        free(name);
+        return;
+    }
+
+    if (label_count == label_capacity) {
+        label_capacity = label_capacity ? label_capacity * 2 : 8;
+        labels = realloc(labels, label_capacity * sizeof(CompilerLabel));
+        if (labels == NULL) { error("Memory allocation failed."); return; }
+    }
+
+    /* address = index of the NEXT byte that will be emitted */
+    labels[label_count].name    = name;
+    labels[label_count].address = (uint32_t)current_chunk()->count;
+    label_count++;
+}
+
+static void add_pending_jump(Token id, size_t operand_offset)
+{
+    char *name = copy_name(id.start, (size_t)id.length);
+    if (name == NULL) { error("Memory allocation failed."); return; }
+
+    if (pending_jump_count == pending_jump_capacity) {
+        pending_jump_capacity = pending_jump_capacity ? pending_jump_capacity * 2 : 8;
+        pending_jumps = realloc(pending_jumps, pending_jump_capacity * sizeof(PendingJump));
+        if (pending_jumps == NULL) { error("Memory allocation failed."); return; }
+    }
+
+    pending_jumps[pending_jump_count].name           = name;
+    pending_jumps[pending_jump_count].operand_offset = operand_offset;
+    pending_jumps[pending_jump_count].line           = id.line;
+    pending_jump_count++;
+}
+
+/* the backpatching pass: runs once, after all code is emitted */
+static void resolve_jumps(void)
+{
+    for (size_t i = 0; i < pending_jump_count; i++) {
+        PendingJump *j = &pending_jumps[i];
+        CompilerLabel *label = find_label(j->name);
+
+        if (label == NULL) {
+            fprintf(stderr, "[line %d] Error: undefined label '%s'.\n", j->line, j->name);
+            parser.hadError = true;
+            continue;
+        }
+        if (label->address > UINT16_MAX) {
+            fprintf(stderr,
+                    "[line %d] Error: label '%s' is out of jump range.\n",
+                    j->line, j->name);
+            parser.hadError = true;
+            continue;
+        }
+
+        uint8_t *code = current_chunk()->code;
+        code[j->operand_offset]     = (label->address >> 8) & 0xFF;
+        code[j->operand_offset + 1] =  label->address       & 0xFF;
+    }
+}
+
+/**************************************************************************************/
 
 static Chunk *current_chunk(void)
 {
@@ -315,6 +439,16 @@ static void binary(void) {
     }
 }
 
+static void string_seq()
+{
+    int length = parser.previous.length - 2;
+    char *value = malloc(length + 1);
+
+    memcpy(value, parser.previous.start + 1, length);
+    value[length] = '\0';
+    emit_constant(_string(value));
+}
+
 /* ------------------------------------------------------------------ */
 /*  Rule table: token -> { prefix fn, infix fn, infix precedence }    */
 /*  Entries not listed are zero-initialised = no rule.                */
@@ -332,6 +466,7 @@ static ParseRule rules[] = {
     [TOKEN_NUMBER]        = { number,   NULL,   PREC_NONE   },
     [TOKEN_DOUBLE_NUMBER] = { number,   NULL,   PREC_NONE   },
     [TOKEN_IDENTIFIER]    = { variable, NULL,   PREC_NONE   },
+    [TOKEN_STRING]        = { string_seq, NULL,   PREC_NONE   },
     [TOKEN_EOF]           = { NULL,     NULL,   PREC_NONE   },
 };
 
@@ -369,7 +504,7 @@ static void expression(void) {
 /* ------------------------------------------------------------------ */
 
 static bool is_datatype_token(TokenType type) {
-    return type >= TOKEN_1BYTEI && type <= TOKEN_1BYTEC;
+    return type >= TOKEN_1BYTEI && type <= TOKEN_STRING_;
 }
 
 static void allocate_variable_memory(void)
@@ -415,6 +550,32 @@ static void allocate_variable_memory(void)
     emit_bytes(OP_MUTABLE_VAR,     mut_index);
     emit_bytes(OP_VARIABLE_DTYPE,  dtype_index);
     emit_bytes(OP_DEFINE_VARIABLE, name_index);
+}
+
+void consume_label(void)
+{
+    Token id = parser.current;
+    if (!match(TOKEN_IDENTIFIER)) {
+        error_at_current("Expected identifier after ':' as label.");
+        return;
+    }
+
+    /* compile-time only: emits NO bytecode */
+    define_label(id);
+}
+
+void consume_jump(void)
+{
+    Token id = parser.current;
+
+    if (!match(TOKEN_IDENTIFIER)) {
+        error_at_current("Expected label name after JUMP.");
+        return;
+    }
+    emit_byte(OP_JUMP);
+    emit_byte(0xFF);           /* placeholder: high byte */
+    emit_byte(0xFF);           /* placeholder: low byte  */
+    add_pending_jump(id, current_chunk()->count - 2);
 }
 
 /* ------------------------------------------------------------------ */
@@ -478,6 +639,14 @@ static void statement(void)
         consume_new_block();
     }
 
+    else if (match(TOKEN_COLON)) {
+        consume_label();
+    }
+
+    else if (match(TOKEN_JUMP)) {
+        consume_jump();
+    }
+
     else {
         expression();
     }
@@ -488,21 +657,24 @@ static void statement(void)
 /* ------------------------------------------------------------------ */
 
 bool compiler(const char *source, Chunk *chunk) {
-
     init_scanner(source);
     compiling_chunk = chunk;
-
     parser.hadError = false;
     parser.panicMode = false;
+    reset_label_tables();          /* fresh state per compile */
 
     advance();
-
     while (parser.current.type != TOKEN_EOF) {
         statement();
-        if (parser.hadError)
-            break;
+        if (parser.hadError) break;
     }
 
     end_compiler();
+    if (!parser.hadError)
+
+        /* backpatch */
+        resolve_jumps();
+
+    reset_label_tables();
     return !parser.hadError;
 }

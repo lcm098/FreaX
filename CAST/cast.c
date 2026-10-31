@@ -1,4 +1,3 @@
-
 #include "./cast.h"
 
 const DtypeName dtype_names[] = {
@@ -10,6 +9,7 @@ const DtypeName dtype_names[] = {
     {"_4byteF",  _4byteF},   {"_8byteF",  _8byteF},
     {"_16byteF", _16byteF},
     {"_1byteC",  _1byteC},
+    {"_string",  _string},
 };
 
 bool dtype_from_name(const char *name, dtype *out)
@@ -74,6 +74,22 @@ bool fits_int(bool neg, __uint128_t mag, int bits, bool is_signed)
 
 bool convert_value(Value in, dtype target, Value *out, const char **why)
 {
+    /* ---- string target: only a string value fits ---- */
+    if (target == _string) {
+        if (in.type != _string) {
+            *why = "a _string variable can only hold a string value";
+            return false;
+        }
+        *out = in;
+        return true;
+    }
+
+    /* ---- numeric targets: a string value is not allowed ---- */
+    if (in.type == _string) {
+        *why = "cannot store a string in a non-string variable";
+        return false;
+    }
+
     if (!value_is_number(in)) {
         *why = "value is not a number";
         return false;

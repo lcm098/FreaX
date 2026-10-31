@@ -75,7 +75,7 @@ console x
 mem slot _1byteU idx = 1
 mem slot _string name = "danishk"
 
-LOOP_FIRST:
+:LOOP_FIRST
 
 if (idx > 10) {
     JUMP LOOP_END
@@ -84,6 +84,25 @@ if (idx > 10) {
 print(f"My Name Is {name}\n")
 
 JUMP LOOP_FIRST
-LOOP_END:
+:LOOP_END:
 
 */
+
+
+/*
+mem slot _string name = "danishk"
+console name
+
+
+:LOOP_FIRST
+console "Hello Everybody"
+JUMP LOOP_FIRST
+
+*/
+
+//JUMP LBL_END
+
+console "HELLO"
+console "WORLD"
+
+//:LBL_END

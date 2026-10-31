@@ -1,8 +1,8 @@
 #include "./vm.h"
 
 VM vm;
-static bool debug_trace_execution = false;
 
+static bool debug_trace_execution = false;
 static void reset_stack(void);
 
 
@@ -14,6 +14,8 @@ static InterpretResult run(void) {
 
 #define READ_BYTE() (*vm.ip++)
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
+#define READ_SHORT() \
+    (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
 
 /*
    Promotion rules:
@@ -205,6 +207,12 @@ do {                                                                        \
             break;
         }
 
+        case OP_JUMP: {
+            uint16_t target = READ_SHORT();
+            vm.ip = vm.chunk->code + target;
+            break;
+        }
+
         case OP_DEFINE_VARIABLE: {
 
             Value variable_name = READ_CONSTANT();
@@ -257,7 +265,7 @@ do {                                                                        \
 #undef READ_BYTE
 #undef READ_CONSTANT
 #undef BINARY_OP
-
+#undef READ_SHORT
 }
 
 /* ------------------------------------------------------------------ */

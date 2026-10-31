@@ -22,6 +22,7 @@ typedef enum {
     OP_POP,
     OP_BEGIN_SCOPE,
     OP_END_SCOPE,
+    OP_JUMP,
 
     // VARIABLE
     OP_DEFINE_VARIABLE,

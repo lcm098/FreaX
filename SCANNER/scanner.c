@@ -110,7 +110,7 @@ static void skip_white_space(){
   }
 }
 
-static Token character_array() {
+static Token string() {
     while(peek() != '"' && !is_at_end()) {
         if(peek() == '\n')
             scanner.line++;
@@ -118,9 +118,9 @@ static Token character_array() {
         advance();
     }
     if(is_at_end())
-        return error_token("unterminated character array");
+        return error_token("unterminated string");
     advance();
-    return make_token(TOKEN_CHARACTER_ARRAY);
+    return make_token(TOKEN_STRING);
 }
 
 static bool is_digit(char c){
@@ -174,9 +174,14 @@ static TokenType identifier_type(){
     }
     case 'm': return check_keyword(1, 2, "em", TOKEN_MEMORY);
     case 'd': return check_keyword(1, 4, "ebug", TOKEN_DEBUG);
+    case 'J': return check_keyword(1, 3, "UMP", TOKEN_JUMP);
     case '_': {
 
         TokenType tok;
+
+        tok = check_keyword(1, 6, "string", TOKEN_STRING_);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
 
         tok = check_keyword(1, 6, "1byteI", TOKEN_1BYTEI);
         if (tok != TOKEN_IDENTIFIER)
@@ -278,6 +283,7 @@ Token scanToken() {
     case '*': return make_token(TOKEN_STAR);
     case '[': return make_token(TOKEN_LEFT_BRACKET);
     case ']': return make_token(TOKEN_RIGHT_BRACKET);
+    case ':': return make_token(TOKEN_COLON);
 
     case '!':
         return make_token(match('=')? TOKEN_BANG_EQUAL : TOKEN_BANG);
@@ -289,7 +295,7 @@ Token scanToken() {
         return make_token(match('=')? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
 
     case '"':
-        return character_array();
+        return string();
 
     }
 
