@@ -9,5 +9,6 @@
 #include "../DEBUG/debug.h"
 #include "../VIRTUAL_MACHINE/vm.h"
 #include "../COMMON/common.h"
+#include "../COLOR/color.h"
 
 #endif

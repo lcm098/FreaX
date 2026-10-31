@@ -8,6 +8,7 @@
 #include "../VALUES/value.h"
 #include "../COMPILER/compiler.h"
 #include "../STORAGE/storage.h"
+#include "../CAST/cast.h"
 
 #define STACK_MAX 256
 

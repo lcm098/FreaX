@@ -118,19 +118,27 @@ void read_eval_print_loop(void)
         }
 
         if (cwd != NULL) {
-            printf("[%s]::[%s]::root=[%s]\n",
-                   cwd, hostname, is_root);
+            printf(
+                BOLD "[" GREEN "%s" RESET "]"
+                "::"
+                "[" BLUE "%s" RESET "]"
+                "::"
+                "root=[" RED "%s" RESET "]\n",
+                cwd, hostname, is_root
+            );
+
             free(cwd);
         } else {
             fprintf(stderr, "PROMPT ERROR: unable to find current directory\n");
-            printf(">>> \n");
+            printf(BOLD">>>" RESET);
+            printf("\n");
         }
 
         char *command = NULL;
         size_t length = 0;
         size_t capacity = 0;
         bool input_ended = false;
-        const char *prompt = "||=> ";
+        const char *prompt = RED"||=> "YELLOW;
 
         for (;;) {
             char *line = readline(prompt);
@@ -168,7 +176,7 @@ void read_eval_print_loop(void)
                 break;
             }
 
-            prompt = "...> ";
+            prompt = CYAN"...> "RESET;
         }
 
         if (input_ended) {
@@ -211,7 +219,7 @@ bool check_file_extension(const char *path) {
         return false;
     }
 
-    return strcmp(ext, ".freax") == 0;
+    return strcmp(ext, ".linux") == 0;
 }
 
 static char* read_file(const char* path){

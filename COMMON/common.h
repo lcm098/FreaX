@@ -13,6 +13,7 @@
 #include <inttypes.h>
 
 #include <errno.h>
+#include <float.h>
 
 #include <stdio.h>
 #include <stdbool.h>
