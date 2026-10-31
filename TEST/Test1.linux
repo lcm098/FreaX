@@ -60,5 +60,31 @@ console money
 
 */
 
+
+/*
 mem slot _1byteU x = 255
 console x
+
+*/
+
+
+// LOOPS with  JUMP, LABEL and CONTINUE
+
+/*
+
+mem slot _1byteU idx = 1
+mem slot _string name = "danishk"
+
+LOOP_FIRST:
+
+if (idx > 10) {
+    JUMP LOOP_END
+}
+
+JUMP LOOP_FIRST
+
+print(f"My Name Is {name}\n")
+
+LOOP_END:
+
+*/
