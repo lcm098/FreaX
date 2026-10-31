@@ -47,6 +47,7 @@ console age
 console money
 */
 
+/*
 
 {
     mem slot _8byteF money = 55.5
@@ -55,5 +56,9 @@ console money
         console money 
     }
 }
+console money
 
-// console money
+*/
+
+mem slot _1byteU x = 255
+console x

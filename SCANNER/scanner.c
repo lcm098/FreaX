@@ -1,4 +1,3 @@
-
 #include "./scanner.h"
 
 Scanner scanner;
@@ -176,11 +175,62 @@ static TokenType identifier_type(){
     case 'm': return check_keyword(1, 2, "em", TOKEN_MEMORY);
     case 'd': return check_keyword(1, 4, "ebug", TOKEN_DEBUG);
     case '_': {
-        TokenType tok = check_keyword(1, 6, "8byteU", TOKEN_8BYTEU);
-        if (tok != TOKEN_IDENTIFIER) {
+
+        TokenType tok;
+
+        tok = check_keyword(1, 6, "1byteI", TOKEN_1BYTEI);
+        if (tok != TOKEN_IDENTIFIER)
             return tok;
-        }
-        return check_keyword(1, 6, "8byteF", TOKEN_8BYTEF);
+
+        tok = check_keyword(1, 6, "1byteU", TOKEN_1BYTEU);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "2byteI", TOKEN_2BYTEI);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "2byteU", TOKEN_2BYTEU);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "4byteI", TOKEN_4BYTEI);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "4byteU", TOKEN_4BYTEU);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "8byteI", TOKEN_8BYTEI);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "8byteU", TOKEN_8BYTEU);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 7, "16byteI", TOKEN_16BYTEI);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 7, "16byteU", TOKEN_16BYTEU);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "4byteF", TOKEN_4BYTEF);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 6, "8byteF", TOKEN_8BYTEF);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        tok = check_keyword(1, 7, "16byteF", TOKEN_16BYTEF);
+        if (tok != TOKEN_IDENTIFIER)
+            return tok;
+
+        return check_keyword(1, 6, "1byteC", TOKEN_1BYTEC);
     }
     case 'o': return check_keyword(1, 8, "ff_debug", TOKEN_OFF_DEBUG);
     case 's': return check_keyword(1, 3, "lot", TOKEN_SLOT);

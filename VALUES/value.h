@@ -1,6 +1,6 @@
-
 #ifndef FREAX_VALUE_H
 #define FREAX_VALUE_H
+
 
 #include "../COMMON/common.h"
 #include "../MEMORY/memory.h"
@@ -8,6 +8,11 @@
 
 /* typedef double Value; */
 
+/*
+   Keep this order: the helper functions below rely on it.
+     _1byteI .. _16byteU   -> integers
+     _4byteF .. _16byteF   -> floats
+*/
 typedef enum {
     _1byteI,
     _1byteU,
@@ -80,6 +85,70 @@ typedef struct {
 #define _1byteC(x)  ((Value) {.type = _1byteC,  .value = { ._1byteC = (x)}})
 #define _string(x)  ((Value) {.type = _string,  .value = { ._string = (x)}})
 
+
+/* ------------------------------------------------------------------ */
+/*  Type helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+static inline bool value_is_integer(Value v) {
+    return v.type >= _1byteI && v.type <= _16byteU;
+}
+
+static inline bool value_is_float(Value v) {
+    return v.type >= _4byteF && v.type <= _16byteF;
+}
+
+static inline bool value_is_number(Value v) {
+    return value_is_integer(v) || value_is_float(v);
+}
+
+static inline int64_t value_to_int64(Value v) {
+    switch (v.type) {
+        case _1byteI:  return v.value._1byteI;
+        case _1byteU:  return v.value._1byteU;
+        case _2byteI:  return v.value._2byteI;
+        case _2byteU:  return v.value._2byteU;
+        case _4byteI:  return v.value._4byteI;
+        case _4byteU:  return v.value._4byteU;
+        case _8byteI:  return v.value._8byteI;
+        case _8byteU:  return (int64_t)v.value._8byteU;
+        case _16byteI: return (int64_t)v.value._16byteI;   /* upar ke 64 bit kat jaate hain */
+        case _16byteU: return (int64_t)v.value._16byteU;
+        case _4byteF:  return (int64_t)v.value._4byteF;
+        case _8byteF:  return (int64_t)v.value._8byteF;
+        case _16byteF: return (int64_t)v.value._16byteF;
+        case _1byteC:  return v.value._1byteC;
+        default:       return 0;
+    }
+}
+
+static inline __int128 value_to_int128(Value v) {
+    switch (v.type) {
+        case _8byteU:  return (__int128)v.value._8byteU;
+        case _16byteI: return v.value._16byteI;
+        case _16byteU: return (__int128)v.value._16byteU;
+        case _4byteF:  return (__int128)v.value._4byteF;
+        case _8byteF:  return (__int128)v.value._8byteF;
+        case _16byteF: return (__int128)v.value._16byteF;
+        default:       return (__int128)value_to_int64(v);
+    }
+}
+
+static inline __float128 value_to_float128(Value v) {
+    switch (v.type) {
+        case _4byteF:  return (__float128)v.value._4byteF;
+        case _8byteF:  return (__float128)v.value._8byteF;
+        case _16byteF: return v.value._16byteF;
+        case _8byteU:  return (__float128)v.value._8byteU;
+        case _16byteI: return (__float128)v.value._16byteI;
+        case _16byteU: return (__float128)v.value._16byteU;
+        default:       return (__float128)value_to_int64(v);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  ValueArray                                                        */
+/* ------------------------------------------------------------------ */
 
 typedef struct {
     int count;

@@ -1,6 +1,8 @@
-
-
 #include "value.h"
+
+#include <inttypes.h>
+#include <quadmath.h>
+#include <stdio.h>
 
 /*
 typedef struct {
@@ -16,12 +18,40 @@ void init_value_array(ValueArray* array) {
     array->count=0;
 }
 
+/* ---------- 128-bit integer printing (printf ke paas %lld ka 128-bit version nahi) ---------- */
+
+static void print_uint128(__uint128_t n) {
+    char buf[40];
+    int i = 39;
+    buf[i] = '\0';
+
+    if (n == 0) {
+        putchar('0');
+        return;
+    }
+
+    while (n > 0) {
+        buf[--i] = (char)('0' + (int)(n % 10));
+        n /= 10;
+    }
+    fputs(&buf[i], stdout);
+}
+
+static void print_int128(__int128 n) {
+    if (n < 0) {
+        putchar('-');
+        print_uint128((__uint128_t)0 - (__uint128_t)n);
+    } else {
+        print_uint128((__uint128_t)n);
+    }
+}
+
 void printValue(Value value) {
     switch (value.type) {
         case _1byteI:
             printf("%" PRId8, value.value._1byteI);
             break;
-            
+
         case _1byteU:
             printf("%" PRIu8, value.value._1byteU);
             break;
@@ -29,7 +59,7 @@ void printValue(Value value) {
         case _2byteI:
             printf("%" PRId16, value.value._2byteI);
             break;
-            
+
         case _2byteU:
             printf("%" PRIu16, value.value._2byteU);
             break;
@@ -37,7 +67,7 @@ void printValue(Value value) {
         case _4byteI:
             printf("%" PRId32, value.value._4byteI);
             break;
-            
+
         case _4byteU:
             printf("%" PRIu32, value.value._4byteU);
             break;
@@ -45,18 +75,17 @@ void printValue(Value value) {
         case _8byteI:
             printf("%" PRId64, value.value._8byteI);
             break;
-            
+
         case _8byteU:
             printf("%" PRIu64, value.value._8byteU);
             break;
 
         case _16byteI:
-            printf("%s", "");
-            printf("%lld", (long long)value.value._16byteI);
+            print_int128(value.value._16byteI);
             break;
-            
+
         case _16byteU:
-            printf("%llu", (unsigned long long)value.value._16byteU);
+            print_uint128(value.value._16byteU);
             break;
 
         case _4byteF:
@@ -67,9 +96,12 @@ void printValue(Value value) {
             printf("%g", value.value._8byteF);
             break;
 
-        case _16byteF:
-            quadmath_snprintf((char[128]){0}, 128, "%Qg", value.value._16byteF);
+        case _16byteF: {
+            char buf[128];
+            quadmath_snprintf(buf, sizeof buf, "%Qg", value.value._16byteF);
+            printf("%s", buf);
             break;
+        }
 
         case _1byteC:
             printf("%c", value.value._1byteC);

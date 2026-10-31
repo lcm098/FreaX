@@ -53,20 +53,6 @@ static Chunk *current_chunk(void)
     return compiling_chunk;
 }
 
-/*
-  2 HELPERS
-*/
-
-static char *token_to_string(Token token) {
-    char *name = malloc((size_t)token.length + 1);
-    if(name == NULL) {
-        return NULL;
-    }
-    memcpy(name, token.start, (size_t)token.length);
-    name[token.length] = '\0';
-    return name;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Error reporting                                                   */
 /* ------------------------------------------------------------------ */
@@ -125,6 +111,39 @@ static void consume(TokenType type, const char *message) {
     error_at_current(message);
 }
 
+static bool check(TokenType type)
+{
+    return parser.current.type == type;
+}
+
+static bool match(TokenType type) {
+
+    if (!check(type))
+        return false;
+    advance();
+    return true;
+}
+
+static TokenType peek(void)
+{
+    return parser.current.type;
+}
+
+/* one-token lookahead: token AFTER parser.current (not used yet) */
+__attribute__((unused))
+static TokenType peek_next(void)
+{
+    Scanner saved = scanner;      /* save scanner state (start, current, line) */
+    Token next = scanToken();     /* scan one token ahead                      */
+    scanner = saved;              /* restore, as if nothing happened           */
+    return next.type;
+}
+
+static bool is_at_end(void)
+{
+    return parser.current.type == TOKEN_EOF;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Bytecode emission                                                 */
 /* ------------------------------------------------------------------ */
@@ -152,6 +171,18 @@ static uint8_t make_constant(Value value) {
     return (uint8_t)constant;
 }
 
+/* heap copy of text -> string constant (all strings are malloc'ed: uniform ownership) */
+static uint8_t string_constant(const char *text, size_t length) {
+    char *copy = malloc(length + 1);
+    if (copy == NULL) {
+        error("Memory allocation failed.");
+        return 0;
+    }
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    return make_constant(_string(copy));
+}
+
 static void emit_constant(Value value) {
     emit_bytes(OP_CONSTANT, make_constant(value));
 }
@@ -164,9 +195,34 @@ static void end_compiler(void) {
 /*  Parse functions (one per grammar rule)                            */
 /* ------------------------------------------------------------------ */
 
-static void number(void) {
+/* ---------- number literal ---------- */
+/*
+   A literal carries no type:
+     integer  -> _8byteI  (or _16byteI / _16byteU when it does not fit)
+     decimal  -> _8byteF  (or _16byteF when it has more than 15 digits)
+   The declared type (_1byteU etc.) is applied by the VM at OP_DEFINE_VARIABLE.
+*/
 
-    char buffer[64];
+/* decimal digits -> unsigned 128-bit. false = overflow (> UINT128_MAX) */
+
+static bool parse_u128(const char *s, __uint128_t *out)
+{
+    const __uint128_t MAX = ~(__uint128_t)0;
+    __uint128_t n = 0;
+
+    for (; *s; s++) {
+        unsigned digit = (unsigned)(*s - '0');
+        if (n > (MAX - digit) / 10)
+            return false;
+        n = n * 10 + digit;
+    }
+
+    *out = n;
+    return true;
+}
+
+static void number(void) {
+    char buffer[128];
     int length = parser.previous.length;
 
     if (length >= (int)sizeof(buffer)) {
@@ -177,10 +233,44 @@ static void number(void) {
     memcpy(buffer, parser.previous.start, (size_t)length);
     buffer[length] = '\0';
 
-    if (parser.previous.type == TOKEN_DOUBLE_NUMBER) {
-        emit_constant(_8byteF(strtod(buffer, NULL)));
-    } else {
-        emit_constant(_8byteU(strtoul(buffer, NULL, 10)));
+    switch (parser.previous.type) {
+
+        case TOKEN_NUMBER: {
+            __uint128_t n;
+            if (!parse_u128(buffer, &n)) {
+                error("Integer literal too large for 16 bytes.");
+                return;
+            }
+
+            const __uint128_t INT64_LIMIT  = (__uint128_t)INT64_MAX;
+            const __uint128_t INT128_LIMIT = (((__uint128_t)1) << 127) - 1;
+
+            if (n <= INT64_LIMIT)
+                emit_constant(_8byteI((int64_t)n));
+            else if (n <= INT128_LIMIT)
+                emit_constant(_16byteI((__int128)n));
+            else
+                emit_constant(_16byteU(n));
+            break;
+        }
+
+        case TOKEN_DOUBLE_NUMBER: {
+            /* double remembers ~15-16 digits, __float128 ~33 */
+            int digits = 0;
+            for (const char *p = buffer; *p; p++)
+                if (*p >= '0' && *p <= '9')
+                    digits++;
+
+            if (digits > 15)
+                emit_constant(_16byteF(strtoflt128(buffer, NULL)));
+            else
+                emit_constant(_8byteF(strtod(buffer, NULL)));
+            break;
+        }
+
+        default:
+            error("Invalid numeric literal.");
+            break;
     }
 }
 
@@ -201,23 +291,13 @@ static void unary(void) {
     }
 }
 
-/*
-  HAVE TO COMPLETE
-*/
+/* ---------- variable read ---------- */
 
 static void variable(void)
 {
-    Token name = parser.previous;
-    char *var_name = token_to_string(name);
-
-    if(var_name == NULL) {
-        error("can not allocate new space for variable name");
-    }
-
-    Value value = _string(var_name);
-    uint8_t var_index = make_constant(value);
-
-    emit_bytes(OP_GET_VARIBLE, var_index);
+    uint8_t name_index = string_constant(parser.previous.start,
+                                         (size_t)parser.previous.length);
+    emit_bytes(OP_GET_VARIBLE, name_index);
 }
 
 static void binary(void) {
@@ -243,7 +323,7 @@ static void binary(void) {
 /* ------------------------------------------------------------------ */
 
 static ParseRule rules[] = {
-    //                       PREFIX    INFINIX  PRECEDENCE
+    //                       PREFIX    INFIX    PRECEDENCE
     [TOKEN_LEFT_PAREN]    = { grouping, NULL,   PREC_NONE   },
     [TOKEN_MINUS]         = { unary,    binary, PREC_TERM   },
     [TOKEN_PLUS]          = { NULL,     binary, PREC_TERM   },
@@ -251,8 +331,8 @@ static ParseRule rules[] = {
     [TOKEN_STAR]          = { NULL,     binary, PREC_FACTOR },
     [TOKEN_NUMBER]        = { number,   NULL,   PREC_NONE   },
     [TOKEN_DOUBLE_NUMBER] = { number,   NULL,   PREC_NONE   },
+    [TOKEN_IDENTIFIER]    = { variable, NULL,   PREC_NONE   },
     [TOKEN_EOF]           = { NULL,     NULL,   PREC_NONE   },
-    [TOKEN_IDENTIFIER]    = {variable,  NULL,   PREC_NONE   },
 };
 
 static ParseRule *get_rule(TokenType type) {
@@ -284,160 +364,90 @@ static void expression(void) {
     parse_precedence(PREC_ASSIGNMENT);
 }
 
-static bool check(TokenType type)
+/* ------------------------------------------------------------------ */
+/*  Declarations:  mem slot|const <datatype> name = expr              */
+/* ------------------------------------------------------------------ */
+
+static bool is_datatype_token(TokenType type) {
+    return type >= TOKEN_1BYTEI && type <= TOKEN_1BYTEC;
+}
+
+static void allocate_variable_memory(void)
 {
-    return parser.current.type == type;
-}
+    bool is_mutable;
 
-static bool match(TokenType type) {
-
-    if (!check(type))
-        return false;
-    advance();
-    return true;
-}
-
-static TokenType peek(void)
-{
-    return parser.current.type;
-}
-
-static TokenType peek_next(void)
-{
-    Scanner saved = scanner;      // scanner ka poora state save (start, current, line)
-    Token next = scanToken();     // ek token aage scan
-    scanner = saved;              // state wapas, jaise kuch hua hi nahi
-    return next.type;
-}
-
-void allocate_variable_memory() {
-
-    // mem slot/const _8byteU age = 55
-
-    bool FLAG_MUTABLE = false;
-    if (match(TOKEN_SLOT))
-        FLAG_MUTABLE = true;
-    else if (match(TOKEN_CONST))
-        FLAG_MUTABLE = false;
-    else
-        error("Expected 'slot/const' while making variable");
-
-    if (match(TOKEN_8BYTEU)) {
-
-        Token var_name = parser.current;
-        consume(TOKEN_IDENTIFIER, "Expect variable name.");
-
-        consume(TOKEN_EQUAL, "Expect '=' after variable name.");
-        expression();
-
-        char *name = token_to_string(var_name);
-        if (name == NULL) {
-            error("Memory allocation failed");
-        }
-
-        uint8_t name_constant_index = make_constant(_string(name));
-
-        const char *variable_dtype = "_8byteU";
-        uint8_t dtype_index = make_constant(_string(variable_dtype));
-
-        /*
-              1 means mutable
-              0 means constant
-         */
-
-        if (FLAG_MUTABLE) {
-            const char *which_type = "mutable";
-            uint8_t which_index = make_constant(_string(which_type));
-            emit_bytes(OP_MUTABLE_VAR, which_index);
-        }
-
-        else {
-            const char *which_type = "constant";
-            uint8_t which_index = make_constant(_string(which_type));
-            emit_bytes(OP_MUTABLE_VAR, which_index);
-        }
-
-        emit_bytes(OP_VARIABLE_DTYPE, dtype_index);
-        emit_bytes(OP_DEFINE_VARIABLE, name_constant_index);
-
-    } else if (match(TOKEN_8BYTEF)) {
-
-            Token var_name = parser.current;
-            consume(TOKEN_IDENTIFIER, "Expect variable name.");
-
-            consume(TOKEN_EQUAL, "Expect '=' after variable name.");
-            expression();
-
-            char *name = token_to_string(var_name);
-            if (name == NULL) {
-                error("Memory allocation failed");
-            }
-
-            uint8_t name_constant_index = make_constant(_string(name));
-
-            const char *variable_dtype = "_8byteF";
-            uint8_t dtype_index = make_constant(_string(variable_dtype));
-
-            /*
-                  1 means mutable
-                  0 means constant
-            */
-
-            if (FLAG_MUTABLE) {
-                const char *which_type = "mutable";
-                uint8_t which_index = make_constant(_string(which_type));
-                emit_bytes(OP_MUTABLE_VAR, which_index);
-            }
-
-            else {
-                const char *which_type = "constant";
-                uint8_t which_index = make_constant(_string(which_type));
-                emit_bytes(OP_MUTABLE_VAR, which_index);
-            }
-
-            emit_bytes(OP_VARIABLE_DTYPE, dtype_index);
-            emit_bytes(OP_DEFINE_VARIABLE, name_constant_index);
-
+    if (match(TOKEN_SLOT)) {
+        is_mutable = true;
+    } else if (match(TOKEN_CONST)) {
+        is_mutable = false;
     } else {
-        error_at_current("Expected '_8byteU' or '_8byteF'");
+        error_at_current("Expected 'slot' or 'const' after 'mem'.");
         return;
     }
+
+    if (!is_datatype_token(parser.current.type)) {
+        error_at_current("Expected a datatype (e.g. _8byteU) after 'slot/const'.");
+        return;
+    }
+
+    advance();
+
+    /* "_1byteU", "_8byteF", ... */
+    Token dtype_token = parser.previous;
+
+    Token var_name = parser.current;
+    consume(TOKEN_IDENTIFIER, "Expect variable name.");
+    consume(TOKEN_EQUAL, "Expect '=' after variable name.");
+
+    // emit value
+    expression();
+
+    if (parser.hadError)
+        return;
+
+    const char *mutability = is_mutable ? "mutable" : "constant";
+
+    uint8_t name_index  = string_constant(var_name.start,    (size_t)var_name.length);
+    uint8_t dtype_index = string_constant(dtype_token.start, (size_t)dtype_token.length);
+    uint8_t mut_index   = string_constant(mutability,        strlen(mutability));
+
+    /* VM stack order:  value, mutability, dtype   (dtype on top) */
+    emit_bytes(OP_MUTABLE_VAR,     mut_index);
+    emit_bytes(OP_VARIABLE_DTYPE,  dtype_index);
+    emit_bytes(OP_DEFINE_VARIABLE, name_index);
 }
 
-bool is_at_end()
-{
-    return parser.current.type  == TOKEN_EOF;
-}
+/* ------------------------------------------------------------------ */
+/*  Blocks, console, debug                                            */
+/* ------------------------------------------------------------------ */
 
-void consume_new_block()
+static void consume_new_block(void)
 {
     emit_byte(OP_BEGIN_SCOPE);
 
-    while (peek() != TOKEN_RIGHT_BRACE && !is_at_end()) {
+    while (peek() != TOKEN_RIGHT_BRACE && !is_at_end() && !parser.hadError) {
         statement();
     }
 
-    if (is_at_end()) {
-        error("Expect '}' after block.");
+    if (parser.hadError)
         return;
-    }
 
-    advance();
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
     emit_byte(OP_END_SCOPE);
 }
 
-void console_expression()
+static void console_expression(void)
 {
     expression();
     emit_byte(OP_PRINT);
 }
 
-void compiler_enable_debug()
+static void compiler_enable_debug(void)
 {
     emit_byte(OP_DEBUG_ON);
 }
 
-void compiler_disable_debug()
+static void compiler_disable_debug(void)
 {
     emit_byte(OP_DEBUG_OFF);
 }
@@ -448,10 +458,8 @@ void compiler_disable_debug()
 
 static void statement(void)
 {
-
     if (match(TOKEN_MEMORY)) {
         allocate_variable_memory();
-
     }
 
     else if (match(TOKEN_CONSOLE)) {
@@ -470,8 +478,7 @@ static void statement(void)
         consume_new_block();
     }
 
-    else
-    {
+    else {
         expression();
     }
 }
