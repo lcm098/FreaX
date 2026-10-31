@@ -61,11 +61,21 @@ bool is_define_entry(Environment *environment, const char *name)
 }
 
 
+/* ===== ARRAY (new) ===== */
+/* arrays are heap objects owned by their environment entry */
+static void release_value(Value value)
+{
+    if (value.type == _array)
+        free_array(value.value._array);
+}
+/* ===== END ARRAY ===== */
+
 bool remove_entry(Environment *environment, const char *name)
 {
     for (size_t i = 0; i < environment->count; i++) {
         if (strcmp(environment->entries[i].name, name) == 0) {
 
+            release_value(environment->entries[i].value);   /* ARRAY (new) */
             free(environment->entries[i].name);
 
             for (size_t j = i; j < environment->count - 1; j++) {
@@ -167,6 +177,7 @@ void init_environment(Environment *environment)
 void free_environment(Environment *environment)
 {
     for (size_t i=0; i<environment->count; i++) {
+        release_value(environment->entries[i].value);   /* ARRAY (new) */
         free(environment->entries[i].name);
     }
 

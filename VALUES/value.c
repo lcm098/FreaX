@@ -111,11 +111,50 @@ void printValue(Value value) {
             printf("%s", value.value._string);
             break;
 
+        /* ARRAY (new) */
+        case _array: {
+            ArrayObj *array = value.value._array;
+            printf("{");
+            for (size_t i = 0; i < array->length; i++) {
+                if (i > 0) printf(", ");
+                printValue(array->items[i]);
+            }
+            printf("}");
+            break;
+        }
+
         case _bool:
             printf("%s", value.value._bool ? "true" : "false");
             break;
     }
 }
+
+/* ===== ARRAY (new) ===== */
+ArrayObj *new_array(dtype elem_type, size_t length) {
+    ArrayObj *array = malloc(sizeof(ArrayObj));
+    if (array == NULL)
+        return NULL;
+
+    array->items = malloc(sizeof(Value) * length);
+    if (array->items == NULL) {
+        free(array);
+        return NULL;
+    }
+
+    array->elem_type = elem_type;
+    array->length    = length;
+    array->init_next = 0;
+    array->readonly  = false;
+    return array;
+}
+
+void free_array(ArrayObj *array) {
+    if (array == NULL)
+        return;
+    free(array->items);
+    free(array);
+}
+/* ===== END ARRAY ===== */
 
 void write_value_array(ValueArray* array, Value value) {
 

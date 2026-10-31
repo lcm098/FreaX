@@ -114,7 +114,8 @@ console "WORLD"
 
 /***************************************************************************/
 /***************************************************************************/
-
+/*
+debug
 
 mem slot _2byteU idx = 1
 mem slot _1byteI table = 7
@@ -127,6 +128,7 @@ console table * idx
 
 if (idx >= 10) {
    JUMP LOOP_END
+   
 } else {
 
    idx += 1
@@ -135,3 +137,22 @@ if (idx >= 10) {
 
 :LOOP_END
 console "TABLE END"
+
+off_debug
+*/
+/*********************************************************************************/
+/**********************************************************************************/
+
+
+
+mem slot[]  _1byteU ages1 = {1, 2, 3}  // size comes from the initializer
+mem slot[5] _1byteU ages2 = {1, 2}     // size 5, the rest is zero
+mem slot[5] _1byteU ages3              //  size 5, all zero (no initializer needed)
+mem const[] _1byteU ages4 = {1, 2}     //  elements cannot be changed
+
+console ages1
+console ages2
+console ages3
+console ages4
+
+// ages4[0] = 55

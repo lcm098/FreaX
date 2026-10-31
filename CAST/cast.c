@@ -74,6 +74,14 @@ bool fits_int(bool neg, __uint128_t mag, int bits, bool is_signed)
 
 bool convert_value(Value in, dtype target, Value *out, const char **why)
 {
+    /* ===== ARRAY (new) ===== */
+    /* ---- a whole array can never be the target of a conversion ---- */
+    if (target == _array) {
+        *why = "cannot assign to a whole array (use name[index] = value)";
+        return false;
+    }
+    /* ===== END ARRAY ===== */
+
     /* ---- string target: only a string value fits ---- */
     if (target == _string) {
         if (in.type != _string) {

@@ -94,6 +94,34 @@ static bool compare_values(Value a, Value b, bool ordered, int *c) {
     return false;
 }
 
+/* ===== ARRAY (new) ===== */
+/* validates  array[index]  and returns the ArrayObj + slot number */
+static bool array_slot(Value array, Value index, ArrayObj **out_array, size_t *out_slot)
+{
+    if (array.type != _array) {
+        fprintf(stderr, "Runtime error: only arrays can be indexed.\n");
+        return false;
+    }
+    if (!value_is_integer(index)) {
+        fprintf(stderr, "Runtime error: array index must be an integer.\n");
+        return false;
+    }
+
+    ArrayObj *arr = array.value._array;
+    __int128 i = value_to_int128(index);
+
+    if (i < 0 || (__uint128_t)i >= (__uint128_t)arr->length) {
+        fprintf(stderr, "Runtime error: index %lld is out of bounds (length %zu).\n",
+                (long long)i, arr->length);
+        return false;
+    }
+
+    *out_array = arr;
+    *out_slot  = (size_t)i;
+    return true;
+}
+/* ===== END ARRAY ===== */
+
 static InterpretResult run(void) {
 
 #define READ_BYTE() (*vm.ip++)
@@ -297,6 +325,146 @@ do {                                                                        \
             break;
         }
 
+        case OP_SET_VARIABLE: {
+            Value name      = READ_CONSTANT();
+            Value new_value = pop();
+            Value current   = get_entry(vm.current_environment, name.value._string);
+
+            Value stored;
+            const char *why = "";
+
+            if (!convert_value(new_value, current.type, &stored, &why)) {
+                fprintf(stderr, "Runtime error: cannot assign to '%s': %s.\n",
+                        name.value._string, why);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            if (!assign_entry(vm.current_environment, name.value._string, stored))
+                return INTERPRET_RUNTIME_ERROR;
+            break;
+        }
+
+        /* ===== ARRAY (new) ===== */
+        case OP_ARRAY_NEW: {
+            Value size_value = READ_CONSTANT();
+            Value type_value = READ_CONSTANT();
+
+            dtype elem_type;
+            if (!dtype_from_name(type_value.value._string, &elem_type)) {
+                fprintf(stderr, "Runtime error: unknown datatype '%s'.\n",
+                        type_value.value._string);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            /* the zero value of the element type */
+            Value zero;
+            const char *why = "";
+            if (elem_type == _string)
+                zero = _string("");
+            else if (!convert_value(_8byteI(0), elem_type, &zero, &why)) {
+                fprintf(stderr, "Runtime error: bad array element type: %s.\n", why);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            size_t length = (size_t)size_value.value._8byteU;
+            ArrayObj *arr = new_array(elem_type, length);
+            if (arr == NULL) {
+                fprintf(stderr, "Runtime error: out of memory for array.\n");
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            for (size_t i = 0; i < length; i++)
+                arr->items[i] = zero;
+
+            push(_array(arr));
+            break;
+        }
+
+        case OP_ARRAY_INIT: {
+            Value value   = pop();
+            ArrayObj *arr = vm.stack_top[-1].value._array;   /* array stays on the stack */
+
+            Value stored;
+            const char *why = "";
+
+            if (arr->init_next >= arr->length ||
+                !convert_value(value, arr->elem_type, &stored, &why)) {
+                fprintf(stderr, "Runtime error: array element %zu: %s.\n",
+                        arr->init_next, arr->init_next >= arr->length ? "too many initializers" : why);
+                free_array(arr);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            arr->items[arr->init_next++] = stored;
+            break;
+        }
+
+        case OP_DEFINE_ARRAY: {
+            Value name       = READ_CONSTANT();
+            Value which_type = pop();
+            Value array      = pop();
+
+            bool is_const = strcmp(which_type.value._string, "constant") == 0;
+            array.value._array->readonly = is_const;
+
+            if (!add_entry(vm.current_environment, array, name.value._string,
+                           is_const, _array)) {
+                free_array(array.value._array);
+                fprintf(stderr, "Failed to define array '%s'.\n", name.value._string);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+            break;
+        }
+
+        case OP_ARRAY_GET: {
+            Value index = pop();
+            Value array = pop();
+
+            ArrayObj *arr;
+            size_t slot;
+            if (!array_slot(array, index, &arr, &slot))
+                return INTERPRET_RUNTIME_ERROR;
+
+            push(arr->items[slot]);
+            break;
+        }
+
+        case OP_ARRAY_SET: {
+            Value value = pop();
+            Value index = pop();
+            Value array = pop();
+
+            ArrayObj *arr;
+            size_t slot;
+            if (!array_slot(array, index, &arr, &slot))
+                return INTERPRET_RUNTIME_ERROR;
+
+            if (arr->readonly) {
+                fprintf(stderr, "Runtime error: cannot modify an element of a constant array.\n");
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            Value stored;
+            const char *why = "";
+            if (!convert_value(value, arr->elem_type, &stored, &why)) {
+                fprintf(stderr, "Runtime error: cannot store value in array element %zu: %s.\n",
+                        slot, why);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            arr->items[slot] = stored;
+            break;
+        }
+
+        case OP_DUP2: {
+            Value a = vm.stack_top[-2];
+            Value b = vm.stack_top[-1];
+            push(a);
+            push(b);
+            break;
+        }
+        /* ===== END ARRAY ===== */
+
         case OP_PRINT: {
             /* print value ko consume karta hai (stack me wapas push nahi karta,
                warna har console statement ke saath stack badhta jayega) */
@@ -400,34 +568,6 @@ do {                                                                        \
                         variable_name.value._string);
                 return INTERPRET_RUNTIME_ERROR;
             }
-
-            break;
-        }
-
-        case OP_SET_VARIABLE: {
-
-            Value name      = READ_CONSTANT();
-            Value new_value = pop();
-            Value current   = get_entry(vm.current_environment, name.value._string);
-
-            /* the stored value already has the variable's declared dtype,
-               so reuse it as the conversion target (range check included) */
-            Value stored;
-            const char *why = "";
-
-            if (!convert_value(new_value, current.type, &stored, &why)) {
-                fprintf(stderr,
-                        "Runtime error: cannot assign to '%s': %s.\n",
-                        name.value._string, why);
-
-                return INTERPRET_RUNTIME_ERROR;
-            }
-
-            /* assign_entry walks up the scopes, rejects constants,
-               and prints its own error message when it fails */
-
-            if (!assign_entry(vm.current_environment, name.value._string, stored))
-                return INTERPRET_RUNTIME_ERROR;
 
             break;
         }

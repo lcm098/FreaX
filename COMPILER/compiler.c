@@ -394,6 +394,15 @@ static void or_(void) {
     emit_byte(OP_TO_BOOL);
 }
 
+/* ===== ARRAY (new) ===== */
+/* name[index]  (read) */
+static void subscript(void) {
+    expression();
+    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array index.");
+    emit_byte(OP_ARRAY_GET);
+}
+/* ===== END ARRAY ===== */
+
 static void string_seq()
 {
     int length = parser.previous.length - 2;
@@ -432,6 +441,7 @@ static ParseRule rules[] = {
     [TOKEN_LESS_EQUAL]    = { NULL,     binary, PREC_COMPARISON },
     [TOKEN_AND_AND]       = { NULL,     and_,   PREC_AND        },
     [TOKEN_OR_OR]         = { NULL,     or_,    PREC_OR         },
+    [TOKEN_LEFT_BRACKET]  = { NULL,     subscript, PREC_CALL    },   /* ARRAY (new) */
     [TOKEN_EOF]           = { NULL,     NULL,   PREC_NONE   },
 };
 
@@ -472,6 +482,117 @@ static bool is_datatype_token(TokenType type) {
     return type >= TOKEN_1BYTEI && type <= TOKEN_STRING_;
 }
 
+/* ===== ARRAY (new) ===== */
+#define ARRAY_MAX_LENGTH 1000000u
+
+/*
+    mem slot[]  _1byteU ages = {1, 2, 3}     size = number of initializers
+    mem slot[5] _1byteU ages = {1, 2}        size 5, the rest is zero
+    mem slot[5] _1byteU ages                 size 5, all zero
+    mem const[] ...                          elements cannot be changed
+
+    '[' has already been consumed by allocate_variable_memory().
+
+    bytecode:  ARRAY_NEW size dtype
+               (<expr> ARRAY_INIT) * count
+               MUTABLE_VAR mut
+               DEFINE_ARRAY name
+*/
+static void allocate_array_memory(bool is_mutable)
+{
+    bool   has_size = false;
+    size_t declared = 0;
+
+    if (check(TOKEN_NUMBER)) {
+        advance();
+
+        char buffer[32];
+        if (parser.previous.length >= (int)sizeof(buffer)) {
+            error("Array size is too large.");
+            return;
+        }
+        memcpy(buffer, parser.previous.start, (size_t)parser.previous.length);
+        buffer[parser.previous.length] = '\0';
+
+        unsigned long long n = strtoull(buffer, NULL, 10);
+        if (n == 0 || n > ARRAY_MAX_LENGTH) {
+            error("Array size must be between 1 and 1000000.");
+            return;
+        }
+        declared = (size_t)n;
+        has_size = true;
+    }
+
+    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array size.");
+
+    if (!is_datatype_token(parser.current.type)) {
+        error_at_current("Expected a datatype (e.g. _8byteU) after 'slot[]' / 'const[]'.");
+        return;
+    }
+    advance();
+    Token dtype_token = parser.previous;
+
+    Token var_name = parser.current;
+    consume(TOKEN_IDENTIFIER, "Expect array name.");
+    if (parser.hadError)
+        return;
+
+    uint8_t dtype_index = string_constant(dtype_token.start, (size_t)dtype_token.length);
+    uint8_t size_index  = make_constant(_8byteU((uint64_t)declared));   /* patched below if size is inferred */
+
+    emit_bytes(OP_ARRAY_NEW, size_index);
+    emit_byte(dtype_index);
+
+    size_t count = 0;
+
+    if (match(TOKEN_EQUAL)) {
+        consume(TOKEN_LEFT_BRACE, "Expect '{' to start the array initializer.");
+
+        if (!check(TOKEN_RIGHT_BRACE)) {
+            do {
+                expression();
+                emit_byte(OP_ARRAY_INIT);
+                count++;
+            } while (!parser.hadError && match(TOKEN_COMMA));
+        }
+
+        consume(TOKEN_RIGHT_BRACE, "Expect '}' after array initializer.");
+    }
+    else if (!has_size) {
+        error_at_current("An array declared with [] needs an initializer: = {...}.");
+        return;
+    }
+
+    if (parser.hadError)
+        return;
+
+    if (!has_size) {
+        if (count == 0) {
+            error("Cannot infer the size of an empty array; write mem slot[N] ...");
+            return;
+        }
+        if (count > ARRAY_MAX_LENGTH) {
+            error("Array initializer is too long.");
+            return;
+        }
+        /* size was unknown when ARRAY_NEW was emitted: fix the constant now */
+        current_chunk()->constants.values[size_index] = _8byteU((uint64_t)count);
+    }
+    else if (count > declared) {
+        error("Too many initializers for this array size.");
+        return;
+    }
+
+    const char *mutability = is_mutable ? "mutable" : "constant";
+
+    uint8_t name_index = string_constant(var_name.start, (size_t)var_name.length);
+    uint8_t mut_index  = string_constant(mutability, strlen(mutability));
+
+    emit_bytes(OP_MUTABLE_VAR,  mut_index);
+    emit_bytes(OP_DEFINE_ARRAY, name_index);
+}
+/* ===== END ARRAY ===== */
+
 static void allocate_variable_memory(void)
 {
     bool is_mutable;
@@ -484,6 +605,13 @@ static void allocate_variable_memory(void)
         error_at_current("Expected 'slot' or 'const' after 'mem'.");
         return;
     }
+
+    /* ===== ARRAY (new) ===== */   /* mem slot[...] / mem const[...] */
+    if (match(TOKEN_LEFT_BRACKET)) {
+        allocate_array_memory(is_mutable);
+        return;
+    }
+    /* ===== END ARRAY ===== */
 
     if (!is_datatype_token(parser.current.type)) {
         error_at_current("Expected a datatype (e.g. _8byteU) after 'slot/const'.");
@@ -914,20 +1042,17 @@ static bool is_assign_op(TokenType t) {
     return t == TOKEN_EQUAL || t == TOKEN_PLUS_EQUAL || t == TOKEN_MINUS_EQUAL;
 }
 
-/*  name = expr      ->  <expr>                 SET name
-    name += expr     ->  GET name  <expr>  ADD  SET name
-    name -= expr     ->  GET name  <expr>  SUB  SET name   */
 static void assignment_statement(void)
 {
-    advance();                                   /* identifier */
+    advance();
     Token name = parser.previous;
     uint8_t name_index = string_constant(name.start, (size_t)name.length);
 
-    TokenType op = parser.current.type;          /* = += -= */
+    TokenType op = parser.current.type;
     advance();
 
     if (op != TOKEN_EQUAL)
-        emit_bytes(OP_GET_VARIBLE, name_index);  /* push current value first */
+        emit_bytes(OP_GET_VARIBLE, name_index);
 
     expression();
 
@@ -936,6 +1061,44 @@ static void assignment_statement(void)
 
     emit_bytes(OP_SET_VARIABLE, name_index);
 }
+
+/* ===== ARRAY (new) ===== */
+/*
+    name[i]  = expr      ->  GET name  <i>  <expr>               ARRAY_SET
+    name[i] += expr      ->  GET name  <i>  DUP2 ARRAY_GET <expr> ADD  ARRAY_SET
+    name[i] -= expr      ->  GET name  <i>  DUP2 ARRAY_GET <expr> SUB  ARRAY_SET
+*/
+static void indexed_assignment_statement(void)
+{
+    advance();                                   /* array name */
+    Token name = parser.previous;
+    uint8_t name_index = string_constant(name.start, (size_t)name.length);
+    emit_bytes(OP_GET_VARIBLE, name_index);
+
+    advance();                                   /* '[' */
+    expression();                                /* index */
+    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array index.");
+
+    TokenType op = parser.current.type;
+    if (!is_assign_op(op)) {
+        error_at_current("Expect '=', '+=' or '-=' after an array element.");
+        return;
+    }
+    advance();
+
+    if (op != TOKEN_EQUAL) {
+        emit_byte(OP_DUP2);
+        emit_byte(OP_ARRAY_GET);
+    }
+
+    expression();
+
+    if (op == TOKEN_PLUS_EQUAL)       emit_byte(OP_ADD);
+    else if (op == TOKEN_MINUS_EQUAL) emit_byte(OP_SUBTRACT);
+
+    emit_byte(OP_ARRAY_SET);
+}
+/* ===== END ARRAY ===== */
 
 static void statement(void)
 {
@@ -974,6 +1137,12 @@ static void statement(void)
     else if (check(TOKEN_IDENTIFIER) && is_assign_op(peek_next())) {
         assignment_statement();
     }
+
+    /* ===== ARRAY (new) ===== */   /* name[i] = ...  += ...  -= ... */
+    else if (check(TOKEN_IDENTIFIER) && peek_next() == TOKEN_LEFT_BRACKET) {
+        indexed_assignment_statement();
+    }
+    /* ===== END ARRAY ===== */
 
     else {
         expression();

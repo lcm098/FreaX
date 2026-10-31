@@ -37,7 +37,11 @@ typedef enum {
 
     _string, // STRING NOT SUPPORTED IN LANGUAGE, STRING FOR OTHER PURPOSE
     _bool,   // result of comparisons / logic (not declarable by the user yet)
+    _array,  /* ARRAY (new): pointer to a heap ArrayObj (fixed length) */
 } dtype;
+
+/* ARRAY (new): forward declaration, used by the dvalue union below */
+typedef struct ArrayObj ArrayObj;
 
 typedef union {
     int8_t   _1byteI;
@@ -63,12 +67,26 @@ typedef union {
 
     const char *_string;
     bool _bool;
+    ArrayObj *_array;   /* ARRAY (new) */
 } dvalue;
 
 typedef struct {
     dtype type;
     dvalue value;
 }Value;
+
+/* ===== ARRAY (new): fixed-length array, allocated once, never grows or shrinks ===== */
+struct ArrayObj {
+    dtype  elem_type;   /* declared element type, e.g. _1byteU     */
+    size_t length;      /* number of elements (fixed)               */
+    size_t init_next;   /* next slot to fill while the initializer runs */
+    bool   readonly;    /* true for  mem const[] ...                */
+    Value *items;       /* length elements, each already converted to elem_type */
+};
+
+ArrayObj *new_array(dtype elem_type, size_t length);
+void free_array(ArrayObj *array);
+/* ===== END ARRAY ===== */
 
 
 #define _1byteI(x)  ((Value) {.type = _1byteI,  .value = { ._1byteI = (x)}})
@@ -87,6 +105,7 @@ typedef struct {
 #define _1byteC(x)  ((Value) {.type = _1byteC,  .value = { ._1byteC = (x)}})
 #define _string(x)  ((Value) {.type = _string,  .value = { ._string = (x)}})
 #define _bool(x)    ((Value) {.type = _bool,    .value = { ._bool = (x)}})
+#define _array(x)   ((Value) {.type = _array,   .value = { ._array = (x)}})   /* ARRAY (new) */
 
 
 /* ------------------------------------------------------------------ */
