@@ -107,7 +107,10 @@ static CompilerLabel *find_label(const char *name)
 static void define_label(Token id)
 {
     char *name = copy_name(id.start, (size_t)id.length);
-    if (name == NULL) { error("Memory allocation failed."); return; }
+    if (name == NULL) {
+        error("Memory allocation failed.");
+        return;
+    }
 
     if (find_label(name)) {
         error("Duplicate label.");
@@ -116,9 +119,14 @@ static void define_label(Token id)
     }
 
     if (label_count == label_capacity) {
+
         label_capacity = label_capacity ? label_capacity * 2 : 8;
         labels = realloc(labels, label_capacity * sizeof(CompilerLabel));
-        if (labels == NULL) { error("Memory allocation failed."); return; }
+
+        if (labels == NULL) {
+            error("Memory allocation failed.");
+            return;
+        }
     }
 
     /* address = index of the NEXT byte that will be emitted */
