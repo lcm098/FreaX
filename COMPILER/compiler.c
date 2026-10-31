@@ -75,115 +75,8 @@ static size_t label_capacity = 0;
 static PendingJump *pending_jumps = NULL;
 static size_t pending_jump_count = 0;
 static size_t pending_jump_capacity = 0;
+static Chunk *current_chunk(void);
 
-/**********************************************************************************/
-/*          BACK PACHING           */
-
-static char *copy_name(const char *text, size_t length)
-{
-    char *copy = malloc(length + 1);
-    if (copy == NULL) return NULL;
-    memcpy(copy, text, length);
-    copy[length] = '\0';
-    return copy;
-}
-
-static void reset_label_tables(void)
-{
-    for (size_t i = 0; i < label_count; i++)        free(labels[i].name);
-    for (size_t i = 0; i < pending_jump_count; i++) free(pending_jumps[i].name);
-    free(labels);        labels = NULL;        label_count = label_capacity = 0;
-    free(pending_jumps); pending_jumps = NULL; pending_jump_count = pending_jump_capacity = 0;
-}
-
-static CompilerLabel *find_label(const char *name)
-{
-    for (size_t i = 0; i < label_count; i++)
-        if (strcmp(labels[i].name, name) == 0)
-            return &labels[i];
-    return NULL;
-}
-
-static void define_label(Token id)
-{
-    char *name = copy_name(id.start, (size_t)id.length);
-    if (name == NULL) {
-        error("Memory allocation failed.");
-        return;
-    }
-
-    if (find_label(name)) {
-        error("Duplicate label.");
-        free(name);
-        return;
-    }
-
-    if (label_count == label_capacity) {
-
-        label_capacity = label_capacity ? label_capacity * 2 : 8;
-        labels = realloc(labels, label_capacity * sizeof(CompilerLabel));
-
-        if (labels == NULL) {
-            error("Memory allocation failed.");
-            return;
-        }
-    }
-
-    /* address = index of the NEXT byte that will be emitted */
-    labels[label_count].name    = name;
-    labels[label_count].address = (uint32_t)current_chunk()->count;
-    label_count++;
-}
-
-static void add_pending_jump(Token id, size_t operand_offset)
-{
-    char *name = copy_name(id.start, (size_t)id.length);
-    if (name == NULL) { error("Memory allocation failed."); return; }
-
-    if (pending_jump_count == pending_jump_capacity) {
-        pending_jump_capacity = pending_jump_capacity ? pending_jump_capacity * 2 : 8;
-        pending_jumps = realloc(pending_jumps, pending_jump_capacity * sizeof(PendingJump));
-        if (pending_jumps == NULL) { error("Memory allocation failed."); return; }
-    }
-
-    pending_jumps[pending_jump_count].name           = name;
-    pending_jumps[pending_jump_count].operand_offset = operand_offset;
-    pending_jumps[pending_jump_count].line           = id.line;
-    pending_jump_count++;
-}
-
-/* the backpatching pass: runs once, after all code is emitted */
-static void resolve_jumps(void)
-{
-    for (size_t i = 0; i < pending_jump_count; i++) {
-        PendingJump *j = &pending_jumps[i];
-        CompilerLabel *label = find_label(j->name);
-
-        if (label == NULL) {
-            fprintf(stderr, "[line %d] Error: undefined label '%s'.\n", j->line, j->name);
-            parser.hadError = true;
-            continue;
-        }
-        if (label->address > UINT16_MAX) {
-            fprintf(stderr,
-                    "[line %d] Error: label '%s' is out of jump range.\n",
-                    j->line, j->name);
-            parser.hadError = true;
-            continue;
-        }
-
-        uint8_t *code = current_chunk()->code;
-        code[j->operand_offset]     = (label->address >> 8) & 0xFF;
-        code[j->operand_offset + 1] =  label->address       & 0xFF;
-    }
-}
-
-/**************************************************************************************/
-
-static Chunk *current_chunk(void)
-{
-    return compiling_chunk;
-}
 
 /* ------------------------------------------------------------------ */
 /*  Error reporting                                                   */
@@ -560,6 +453,298 @@ static void allocate_variable_memory(void)
     emit_bytes(OP_DEFINE_VARIABLE, name_index);
 }
 
+/**********************************************************************************/
+/*          BACK PACHING           */
+
+static char *copy_name(const char *text, size_t length)
+{
+    char *copy = malloc(length + 1);
+    if (copy == NULL) return NULL;
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+static void reset_label_tables(void)
+{
+    for (size_t i = 0; i < label_count; i++)        free(labels[i].name);
+    for (size_t i = 0; i < pending_jump_count; i++) free(pending_jumps[i].name);
+    free(labels);        labels = NULL;        label_count = label_capacity = 0;
+    free(pending_jumps); pending_jumps = NULL; pending_jump_count = pending_jump_capacity = 0;
+}
+
+static CompilerLabel *find_label(const char *name)
+{
+    for (size_t i = 0; i < label_count; i++)
+        if (strcmp(labels[i].name, name) == 0)
+            return &labels[i];
+    return NULL;
+}
+
+static void define_label(Token id)
+{
+    /*
+        Copy the label name into separately allocated memory.
+        The token points to the source code, but the label table
+        needs to maintain its own copy.
+    */
+    char *name = copy_name(id.start, (size_t)id.length);
+    if (name == NULL) {
+        error("Memory allocation failed.");
+        return;
+    }
+
+    /*
+        Labels must have unique names.
+        If the name already exists, reject this definition.
+    */
+    if (find_label(name)) {
+        error("Duplicate label.");
+        free(name);
+        return;
+    }
+
+    /*
+        Ensure the label table has an available slot.
+        If full, double its capacity (initial capacity is 8).
+    */
+    if (label_count == label_capacity) {
+
+        label_capacity = label_capacity ? label_capacity * 2 : 8;
+        labels = realloc(labels, label_capacity * sizeof(CompilerLabel));
+
+        if (labels == NULL) {
+            error("Memory allocation failed.");
+            return;
+        }
+    }
+
+    /*
+        Register the label:
+        - name    = label identifier.
+        - address = current bytecode count, i.e. the index where
+                    the next instruction will be emitted.
+
+        Labels emit no bytecode; they only mark an address.
+    */
+    labels[label_count].name    = name;
+    labels[label_count].address = (uint32_t)current_chunk()->count;
+
+    // Increase the number of registered labels.
+    label_count++;
+}
+
+static void add_pending_jump(Token id, size_t operand_offset)
+{
+    char *name = copy_name(id.start, (size_t)id.length);
+
+    if (name == NULL)
+    {
+        error("Memory allocation failed.");
+        return;
+    }
+
+    if (pending_jump_count == pending_jump_capacity) {
+
+        pending_jump_capacity = pending_jump_capacity ? pending_jump_capacity * 2 : 8;
+        pending_jumps = realloc(pending_jumps, pending_jump_capacity * sizeof(PendingJump));
+
+        if (pending_jumps == NULL)
+        {
+            error("Memory allocation failed.");
+            return;
+        }
+    }
+
+    pending_jumps[pending_jump_count].name           = name;
+    pending_jumps[pending_jump_count].operand_offset = operand_offset;
+    pending_jumps[pending_jump_count].line           = id.line;
+    pending_jump_count++;
+}
+
+/* the backpatching pass: runs once, after all code is emitted */
+/* this function invoked by compiler at last of compiling to ensure we captured
+   every labels and jump
+
+
+   REFERENCE:
+
+   typedef struct
+    {
+        char *name;
+        uint32_t address;
+    } CompilerLabel;
+
+    typedef struct
+    {
+        char *name;
+        size_t operand_offset;
+        int line;
+    } PendingJump;
+
+
+    static CompilerLabel *labels = NULL;
+
+    static size_t label_count = 0;
+    static size_t label_capacity = 0;
+
+    static PendingJump *pending_jumps = NULL;
+
+    static size_t pending_jump_count = 0;
+    static size_t pending_jump_capacity = 0;
+    static Chunk *current_chunk(void);
+*/
+
+static void resolve_jumps(void)
+{
+    for (size_t i = 0; i < pending_jump_count; i++) {
+
+        PendingJump *j = &pending_jumps[i];
+
+        /*
+              find_label takes string as name return CompilingLabel struct-Object
+              of correct (counting 1) label information. and return NULL if fail.
+
+              PendingJump *j - points on:
+                                           j->name
+                                           j->operand_offset
+                                           j->line
+
+             basically final_label find corresponding label against name.
+        */
+
+        CompilerLabel *label = find_label(j->name);
+
+        if (label == NULL) {
+            fprintf(stderr, "[line %d] Error: undefined label '%s'.\n", j->line, j->name);
+            parser.hadError = true;
+            continue;
+        }
+
+        if (label->address > UINT16_MAX) {
+            fprintf(stderr,
+                    "[line %d] Error: label '%s' is out of jump range.\n",
+                    j->line, j->name);
+            parser.hadError = true;
+            continue;
+        }
+
+        /*
+              current_chunk()->code - means get the *FIRST* address of bytecode array
+              uint8_t *code - points the first byte.
+
+              *IMPORTANT*
+              label->address - holds the actual address in bytecode array where we want to
+                               jump.
+
+            The problem is address store in uint32_t (4bytes) but we store the
+            jump address in 2 bytes (uint16_t).
+
+            so earlier we stored 0xFF (uint16_t) + 0xFF (uint16_t) 0xFF = uint32_t;
+
+            High byte — upper 8 bits.
+            Low byte — lower 8 bits.
+
+            *ASSUME:*
+
+                We have a label named "START" whose bytecode address is 13.
+
+                    labels[label_count].name    = "START";
+                    labels[label_count].address = 13;
+
+                Decimal 13 in binary (16 bits):
+
+                    00000000 00001101
+                    |------| |------|
+                    High     Low
+                    byte     byte
+
+                HIGH BYTE:
+
+                    (label->address >> 8) & 0xFF
+
+                    First, >> 8 shifts all bits 8 positions to the right:
+
+                        00000000 00001101
+                        >> 8
+                        -----------------
+                        00000000 00000000
+
+                    Then, & 0xFF keeps only the lower 8 bits.
+
+                    Result = 0
+
+                LOW BYTE:
+
+                    label->address & 0xFF
+
+                    00000000 00001101
+                    00000000 11111111  (0xFF)
+                    -----------------
+                    00000000 00001101
+
+                    Result = 13
+
+                *FINAL BACKPATCHING:*
+
+                    code[j->operand_offset]     = 0;  // High byte
+                    code[j->operand_offset + 1] = 13; // Low byte
+
+                Now the two placeholder bytes have been replaced with the actual
+                jump address: 13.
+
+                IMPORTANT:
+                0xFF is a single byte (8 bits), not uint16_t.
+                Two 0xFF bytes together reserve 16 bits (2 bytes).
+
+        */
+
+        uint8_t *code = current_chunk()->code;
+        code[j->operand_offset]     = (label->address >> 8) & 0xFF;
+        code[j->operand_offset + 1] =  label->address       & 0xFF;
+    }
+}
+
+/*
+compiling_chunk =
+
+typedef struct {
+    uint8_t *code;
+    int count;
+    int capacity;
+    int *lines;
+    ValueArray constants;
+}Chunk;
+
+Chunk means Bytecode Array
+and emit_byte and emit_bytes invoke write_chunk function
+and write_chunk function write in Chunk Array (bytecode array)
+
+why current_chunk()->count - 2 ?
+because of:
+
+emit_byte(OP_JUMP);  // giving this addess
+emit_byte(0xFF);     - 1
+emit_byte(0xFF);     - 1
+
+ASSUME in bytecode array:
+if INDEX 10 = OP_JUMP
+INDEX 11 = Address HIGH byte
+INDEX 12 = ADDRESS LOW byte
+
+we need 11! but count is 13, so 13-2 = 11
+
+Quick!
+write_chunk writes the bytecode and increment the count by one and line by 1
+
+*/
+
+static Chunk *current_chunk(void)
+{
+    return compiling_chunk;
+}
+
+
 void consume_label(void)
 {
     Token id = parser.current;
@@ -680,7 +865,10 @@ bool compiler(const char *source, Chunk *chunk) {
     end_compiler();
     if (!parser.hadError)
 
-        /* backpatch */
+        /* back-patching */
+        /*
+          for labels and jumps
+        */
         resolve_jumps();
 
     reset_label_tables();
