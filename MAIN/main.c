@@ -5,11 +5,22 @@
 
 #include "./main.h"
 
+
 static int insert_open_bracket(int count, int key) {
     (void)count;
     (void)key;
 
     rl_insert_text("[]");
+    rl_point--;
+
+    return 0;
+}
+
+static int insert_open_formatted_bracket(int count, int key) {
+    (void)count;
+    (void)key;
+
+    rl_insert_text("f[]");
     rl_point--;
 
     return 0;
@@ -107,6 +118,7 @@ void read_eval_print_loop(void)
     rl_bind_key('{', insert_open_braces);
     rl_bind_key('"', insert_double_quote);
     rl_bind_key('\'', insert_single_quote);
+    rl_bind_key('f', insert_open_formatted_bracket);
 
     for (;;) {
         char *cwd = getcwd(NULL, 0);
