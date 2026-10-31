@@ -216,6 +216,30 @@ static void end_compiler(void) {
     emit_return();
 }
 
+/* ---------- jumps for if/else, && and || ----------
+   Same format as OP_JUMP: opcode + 2-byte ABSOLUTE address (high byte first).
+   emit_jump() writes a placeholder and returns where the operand lives;
+   patch_jump() later fills it with "the address of the next byte to be emitted". */
+
+static int emit_jump(uint8_t instruction) {
+    emit_byte(instruction);
+    emit_byte(0xFF);
+    emit_byte(0xFF);
+    return current_chunk()->count - 2;
+}
+
+static void patch_jump(int offset) {
+    int target = current_chunk()->count;
+
+    if (target > UINT16_MAX) {
+        error("Too much code to jump over.");
+        return;
+    }
+
+    current_chunk()->code[offset]     = (uint8_t)((target >> 8) & 0xFF);
+    current_chunk()->code[offset + 1] = (uint8_t)(target & 0xFF);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Parse functions (one per grammar rule)                            */
 /* ------------------------------------------------------------------ */
@@ -312,6 +336,7 @@ static void unary(void) {
 
     switch (operator_type) {
         case TOKEN_MINUS: emit_byte(OP_NEGATE); break;
+        case TOKEN_BANG:  emit_byte(OP_NOT);    break;
         default: return;
     }
 }
@@ -336,8 +361,37 @@ static void binary(void) {
         case TOKEN_MINUS: emit_byte(OP_SUBTRACT); break;
         case TOKEN_STAR:  emit_byte(OP_MULTIPLY); break;
         case TOKEN_SLASH: emit_byte(OP_DIVIDE);   break;
+
+        case TOKEN_EQUAL_EQUAL:   emit_byte(OP_EQUAL);         break;
+        case TOKEN_BANG_EQUAL:    emit_byte(OP_NOT_EQUAL);     break;
+        case TOKEN_GREATER:       emit_byte(OP_GREATER);       break;
+        case TOKEN_GREATER_EQUAL: emit_byte(OP_GREATER_EQUAL); break;
+        case TOKEN_LESS:          emit_byte(OP_LESS);          break;
+        case TOKEN_LESS_EQUAL:    emit_byte(OP_LESS_EQUAL);    break;
         default: return;
     }
+}
+
+/* a && b : if a is falsey we skip b (short-circuit); the result is always a bool */
+static void and_(void) {
+    int end_jump = emit_jump(OP_JUMP_IF_FALSE);   /* a stays on the stack */
+    emit_byte(OP_POP);                            /* a was truthy: drop it, evaluate b */
+
+    parse_precedence((Precedence)(PREC_AND + 1));
+
+    patch_jump(end_jump);
+    emit_byte(OP_TO_BOOL);
+}
+
+/* a || b : if a is truthy we skip b (short-circuit); the result is always a bool */
+static void or_(void) {
+    int end_jump = emit_jump(OP_JUMP_IF_TRUE);
+    emit_byte(OP_POP);
+
+    parse_precedence((Precedence)(PREC_OR + 1));
+
+    patch_jump(end_jump);
+    emit_byte(OP_TO_BOOL);
 }
 
 static void string_seq()
@@ -368,6 +422,16 @@ static ParseRule rules[] = {
     [TOKEN_DOUBLE_NUMBER] = { number,   NULL,   PREC_NONE   },
     [TOKEN_IDENTIFIER]    = { variable, NULL,   PREC_NONE   },
     [TOKEN_STRING]        = { string_seq, NULL,   PREC_NONE   },
+
+    [TOKEN_BANG]          = { unary,    NULL,   PREC_NONE       },
+    [TOKEN_BANG_EQUAL]    = { NULL,     binary, PREC_EQUALITY   },
+    [TOKEN_EQUAL_EQUAL]   = { NULL,     binary, PREC_EQUALITY   },
+    [TOKEN_GREATER]       = { NULL,     binary, PREC_COMPARISON },
+    [TOKEN_GREATER_EQUAL] = { NULL,     binary, PREC_COMPARISON },
+    [TOKEN_LESS]          = { NULL,     binary, PREC_COMPARISON },
+    [TOKEN_LESS_EQUAL]    = { NULL,     binary, PREC_COMPARISON },
+    [TOKEN_AND_AND]       = { NULL,     and_,   PREC_AND        },
+    [TOKEN_OR_OR]         = { NULL,     or_,    PREC_OR         },
     [TOKEN_EOF]           = { NULL,     NULL,   PREC_NONE   },
 };
 
@@ -810,6 +874,69 @@ static void compiler_disable_debug(void)
 /*    STATEMENTS                                                      */
 /**********************************************************************/
 
+/*
+    if (condition) statement [else statement]
+
+        <condition>
+        JUMP_IF_FALSE  --------------+
+        POP                          |
+        <then>                       |
+        JUMP  -------------------+   |
+                                 |   |
+        POP   <------------------|---+     (else starts here)
+        <else>                   |
+        ...   <------------------+
+
+    "else if" needs no special code: it is just  else + another if-statement.
+*/
+static void if_statement(void)
+{
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    int then_jump = emit_jump(OP_JUMP_IF_FALSE);
+    emit_byte(OP_POP);                    /* condition true: drop it */
+    statement();
+
+    int else_jump = emit_jump(OP_JUMP);   /* skip the else part */
+
+    patch_jump(then_jump);
+    emit_byte(OP_POP);                    /* condition false: drop it */
+
+    if (match(TOKEN_ELSE))
+        statement();
+
+    patch_jump(else_jump);
+}
+
+static bool is_assign_op(TokenType t) {
+    return t == TOKEN_EQUAL || t == TOKEN_PLUS_EQUAL || t == TOKEN_MINUS_EQUAL;
+}
+
+/*  name = expr      ->  <expr>                 SET name
+    name += expr     ->  GET name  <expr>  ADD  SET name
+    name -= expr     ->  GET name  <expr>  SUB  SET name   */
+static void assignment_statement(void)
+{
+    advance();                                   /* identifier */
+    Token name = parser.previous;
+    uint8_t name_index = string_constant(name.start, (size_t)name.length);
+
+    TokenType op = parser.current.type;          /* = += -= */
+    advance();
+
+    if (op != TOKEN_EQUAL)
+        emit_bytes(OP_GET_VARIBLE, name_index);  /* push current value first */
+
+    expression();
+
+    if (op == TOKEN_PLUS_EQUAL)       emit_byte(OP_ADD);
+    else if (op == TOKEN_MINUS_EQUAL) emit_byte(OP_SUBTRACT);
+
+    emit_bytes(OP_SET_VARIABLE, name_index);
+}
+
 static void statement(void)
 {
     if (match(TOKEN_MEMORY)) {
@@ -840,8 +967,17 @@ static void statement(void)
         consume_jump();
     }
 
+    else if (match(TOKEN_IF)) {
+        if_statement();
+    }
+
+    else if (check(TOKEN_IDENTIFIER) && is_assign_op(peek_next())) {
+        assignment_statement();
+    }
+
     else {
         expression();
+        emit_byte(OP_POP);   /* expression statement: throw the result away */
     }
 }
 

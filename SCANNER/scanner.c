@@ -239,6 +239,8 @@ static TokenType identifier_type(){
     }
     case 'o': return check_keyword(1, 8, "ff_debug", TOKEN_OFF_DEBUG);
     case 's': return check_keyword(1, 3, "lot", TOKEN_SLOT);
+    case 'i': return check_keyword(1, 1, "f",   TOKEN_IF);
+    case 'e': return check_keyword(1, 3, "lse", TOKEN_ELSE);
 
     }
 
@@ -277,8 +279,6 @@ Token scanToken() {
     case ';': return make_token(TOKEN_SEMICOLON);
     case ',': return make_token(TOKEN_COMMA);
     case '.': return make_token(TOKEN_DOT);
-    case '-': return make_token(TOKEN_MINUS);
-    case '+': return make_token(TOKEN_PLUS);
     case '/': return make_token(TOKEN_SLASH);
     case '*': return make_token(TOKEN_STAR);
     case '[': return make_token(TOKEN_LEFT_BRACKET);
@@ -293,6 +293,17 @@ Token scanToken() {
         return make_token(match('=')? TOKEN_LESS_EQUAL : TOKEN_LESS);
     case '>':
         return make_token(match('=')? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
+    case '-':
+        return make_token(match('=') ? TOKEN_MINUS_EQUAL : TOKEN_MINUS);
+    case '+':
+        return make_token(match('=') ? TOKEN_PLUS_EQUAL  : TOKEN_PLUS);
+
+    case '&':
+        return match('&') ? make_token(TOKEN_AND_AND)
+                          : error_token("Unexpected character '&' (did you mean '&&'?)");
+    case '|':
+        return match('|') ? make_token(TOKEN_OR_OR)
+                          : error_token("Unexpected character '|' (did you mean '||'?)");
 
     case '"':
         return string();

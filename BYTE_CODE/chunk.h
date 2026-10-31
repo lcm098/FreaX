@@ -1,4 +1,3 @@
-
 #ifndef FREAX_CHUNK_H
 #define FREAX_CHUNK_H
 
@@ -22,7 +21,20 @@ typedef enum {
     OP_POP,
     OP_BEGIN_SCOPE,
     OP_END_SCOPE,
+    OP_LABEL,
     OP_JUMP,
+    OP_JUMP_IF_FALSE,         // jump if top of stack is falsey  (does NOT pop)
+    OP_JUMP_IF_TRUE,          // jump if top of stack is truthy  (does NOT pop)
+
+    // COMPARISON / LOGIC
+    OP_EQUAL,
+    OP_NOT_EQUAL,
+    OP_GREATER,
+    OP_GREATER_EQUAL,
+    OP_LESS,
+    OP_LESS_EQUAL,
+    OP_NOT,                   // !x
+    OP_TO_BOOL,               // turn top of stack into a bool (used by && and ||)
 
     // VARIABLE
     OP_DEFINE_VARIABLE,

@@ -98,11 +98,40 @@ console name
 console "Hello Everybody"
 JUMP LOOP_FIRST
 
-*/
 
-//JUMP LBL_END
+JUMP LBL_END
 
 console "HELLO"
 console "WORLD"
 
-//:LBL_END
+:LBL_END
+*/
+
+
+
+
+
+
+/***************************************************************************/
+/***************************************************************************/
+
+
+mem slot _2byteU idx = 1
+mem slot _1byteI table = 7
+
+console "TABLE START"
+
+:LOOP_START
+
+console table * idx
+
+if (idx >= 10) {
+   JUMP LOOP_END
+} else {
+
+   idx += 1
+   JUMP LOOP_START
+}
+
+:LOOP_END
+console "TABLE END"

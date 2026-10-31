@@ -110,6 +110,10 @@ void printValue(Value value) {
         case _string:
             printf("%s", value.value._string);
             break;
+
+        case _bool:
+            printf("%s", value.value._bool ? "true" : "false");
+            break;
     }
 }
 

@@ -27,6 +27,12 @@ static int constant_instruction(const char* name, int offset, Chunk *chunk) {
     return offset + 2;
 }
 
+static int jump_instruction(const char* name, int offset, Chunk *chunk) {
+    uint16_t target = (uint16_t)((chunk->code[offset + 1] << 8) |
+                                  chunk->code[offset + 2]);
+    printf("%s -> %05d\n", name, target);
+    return offset + 3;
+}
 
 int disassemble_instruction(Chunk *chunk, int offset) {
 
@@ -84,7 +90,40 @@ int disassemble_instruction(Chunk *chunk, int offset) {
         return constant_instruction("OP_CONSTANT_VAR", offset, chunk);
 
     case OP_JUMP:
-        return constant_instruction("OP_JUMP", offset, chunk);
+        return jump_instruction("OP_JUMP", offset, chunk);
+
+        case OP_JUMP_IF_FALSE:
+        return jump_instruction("OP_JUMP_IF_FALSE", offset, chunk);
+
+    case OP_JUMP_IF_TRUE:
+        return jump_instruction("OP_JUMP_IF_TRUE", offset, chunk);
+
+    case OP_EQUAL:
+        return simple_instruction("OP_EQUAL", offset);
+
+    case OP_NOT_EQUAL:
+        return simple_instruction("OP_NOT_EQUAL", offset);
+
+    case OP_GREATER:
+        return simple_instruction("OP_GREATER", offset);
+
+    case OP_GREATER_EQUAL:
+        return simple_instruction("OP_GREATER_EQUAL", offset);
+
+    case OP_LESS:
+        return simple_instruction("OP_LESS", offset);
+
+    case OP_LESS_EQUAL:
+        return simple_instruction("OP_LESS_EQUAL", offset);
+
+    case OP_NOT:
+        return simple_instruction("OP_NOT", offset);
+
+    case OP_TO_BOOL:
+        return simple_instruction("OP_TO_BOOL", offset);
+
+    case OP_SET_VARIABLE:
+        return constant_instruction("OP_SET_VARIABLE", offset, chunk);
 
     case OP_MUTABLE_VAR:
         return constant_instruction("OP_MUTABLE_VAR", offset, chunk);

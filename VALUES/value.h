@@ -36,6 +36,7 @@ typedef enum {
     _1byteC,
 
     _string, // STRING NOT SUPPORTED IN LANGUAGE, STRING FOR OTHER PURPOSE
+    _bool,   // result of comparisons / logic (not declarable by the user yet)
 } dtype;
 
 typedef union {
@@ -61,6 +62,7 @@ typedef union {
     char _1byteC;
 
     const char *_string;
+    bool _bool;
 } dvalue;
 
 typedef struct {
@@ -84,6 +86,7 @@ typedef struct {
 #define _16byteF(x) ((Value) {.type = _16byteF, .value = { ._16byteF = (x)}})
 #define _1byteC(x)  ((Value) {.type = _1byteC,  .value = { ._1byteC = (x)}})
 #define _string(x)  ((Value) {.type = _string,  .value = { ._string = (x)}})
+#define _bool(x)    ((Value) {.type = _bool,    .value = { ._bool = (x)}})
 
 
 /* ------------------------------------------------------------------ */
