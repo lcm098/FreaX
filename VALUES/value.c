@@ -143,7 +143,7 @@ ArrayObj *new_array(dtype elem_type, size_t length) {
 
     array->elem_type = elem_type;
     array->length    = length;
-    array->init_next = 0;
+    array->total     = length;   /* MULTIDIM (new/changed) */
     array->readonly  = false;
     return array;
 }
@@ -151,6 +151,15 @@ ArrayObj *new_array(dtype elem_type, size_t length) {
 void free_array(ArrayObj *array) {
     if (array == NULL)
         return;
+
+    /* ===== MULTIDIM (new/changed) ===== */
+    /* an outer dimension owns the inner arrays */
+    if (array->elem_type == _array) {
+        for (size_t i = 0; i < array->length; i++)
+            free_array(array->items[i].value._array);
+    }
+    /* ===== END MULTIDIM ===== */
+
     free(array->items);
     free(array);
 }

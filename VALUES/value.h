@@ -76,13 +76,24 @@ typedef struct {
 }Value;
 
 /* ===== ARRAY (new): fixed-length array, allocated once, never grows or shrinks ===== */
+/* ===== MULTIDIM (new/changed) ===== */
+#define ARRAY_MAX_DIMS   8          /* mem slot[2][3][4]... at most 8 dimensions   */
+#define ARRAY_MAX_LENGTH 1000000u   /* max number of elements (all dimensions)     */
+
+/*
+   One ArrayObj per dimension level:
+     - last dimension : items are plain values of elem_type
+     - outer dimension: elem_type is _array and every item is an _array Value
+                        pointing to the next dimension's ArrayObj
+*/
 struct ArrayObj {
-    dtype  elem_type;   /* declared element type, e.g. _1byteU     */
-    size_t length;      /* number of elements (fixed)               */
-    size_t init_next;   /* next slot to fill while the initializer runs */
-    bool   readonly;    /* true for  mem const[] ...                */
-    Value *items;       /* length elements, each already converted to elem_type */
+    dtype  elem_type;   /* element type (_array for an outer dimension)       */
+    size_t length;      /* number of items at THIS level (fixed)              */
+    size_t total;       /* number of leaf elements under this array           */
+    bool   readonly;    /* true for  mem const[] ...  (set on every level)    */
+    Value *items;
 };
+/* ===== END MULTIDIM ===== */
 
 ArrayObj *new_array(dtype elem_type, size_t length);
 void free_array(ArrayObj *array);

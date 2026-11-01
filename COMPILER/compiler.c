@@ -483,47 +483,152 @@ static bool is_datatype_token(TokenType type) {
 }
 
 /* ===== ARRAY (new) ===== */
-#define ARRAY_MAX_LENGTH 1000000u
+/* ===== MULTIDIM (new/changed) ===== */
+
+/* 4-byte big-endian operand (used for array dimensions and leaf positions) */
+static void emit_u32(uint32_t v) {
+    emit_byte((uint8_t)((v >> 24) & 0xFF));
+    emit_byte((uint8_t)((v >> 16) & 0xFF));
+    emit_byte((uint8_t)((v >> 8)  & 0xFF));
+    emit_byte((uint8_t)(v & 0xFF));
+}
+
+static void patch_u32(int offset, uint32_t v) {
+    uint8_t *code = current_chunk()->code;
+    code[offset]     = (uint8_t)((v >> 24) & 0xFF);
+    code[offset + 1] = (uint8_t)((v >> 16) & 0xFF);
+    code[offset + 2] = (uint8_t)((v >> 8)  & 0xFF);
+    code[offset + 3] = (uint8_t)(v & 0xFF);
+}
+
+typedef struct {
+    size_t dims[ARRAY_MAX_DIMS];     /* dims[0] may be 0 = "infer from initializer" */
+    size_t stride[ARRAY_MAX_DIMS];   /* leaves per item at this level               */
+    int    ndims;
+} ArrayShape;
 
 /*
-    mem slot[]  _1byteU ages = {1, 2, 3}     size = number of initializers
-    mem slot[5] _1byteU ages = {1, 2}        size 5, the rest is zero
-    mem slot[5] _1byteU ages                 size 5, all zero
-    mem const[] ...                          elements cannot be changed
+    Parses one "{ ... }" level of an initializer.
 
-    '[' has already been consumed by allocate_variable_memory().
+        mem slot[][3] _1byteU a = { {1, 2, 3}, {4, 5, 6} }
 
-    bytecode:  ARRAY_NEW size dtype
-               (<expr> ARRAY_INIT) * count
+    level 0  -> the outer braces, every item is itself a "{...}"
+    level 1  -> the inner braces, every item is an expression
+
+    Every expression is emitted as   <expr> ARRAY_INIT <flat leaf position>,
+    so fewer values than the declared size simply stay zero.
+    Returns how many items this level had.
+*/
+static size_t array_initializer(const ArrayShape *shape, int level, size_t base, bool unlimited)
+{
+    consume(TOKEN_LEFT_BRACE, level == 0 ? "Expect '{' to start the array initializer."
+                                         : "Expect '{' for the next array dimension.");
+    size_t count = 0;
+
+    if (!check(TOKEN_RIGHT_BRACE)) {
+        do {
+            if (unlimited) {
+                if (count + 1 > ARRAY_MAX_LENGTH / shape->stride[level]) {
+                    error_at_current("Array initializer is too long.");
+                    return count;
+                }
+            } else if (count >= shape->dims[level]) {
+                error_at_current("Too many initializers for this array dimension.");
+                return count;
+            }
+
+            size_t position = base + count * shape->stride[level];
+
+            if (level < shape->ndims - 1) {
+                array_initializer(shape, level + 1, position, false);
+            } else {
+                expression();
+                emit_byte(OP_ARRAY_INIT);
+                emit_u32((uint32_t)position);
+            }
+            count++;
+
+        } while (!parser.hadError && match(TOKEN_COMMA));
+    }
+
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after array initializer.");
+    return count;
+}
+
+/*
+    mem slot[]     _1byteU a = {1, 2, 3}                    size from initializer
+    mem slot[5]    _1byteU a = {1, 2}                       size 5, rest is zero
+    mem slot[5]    _1byteU a                                size 5, all zero
+    mem slot[][3]  _1byteU a = {{1, 2, 3}, {4, 5, 6}}       2 x 3
+    mem slot[1][3][2] _1byteU a = {{{1, 2}, {3, 4}, {5, 6}}}
+    mem const[2][2] ...                                      elements cannot change
+
+    Only the FIRST dimension may be empty, up to 8 dimensions, 1000000 elements total.
+    '[' (the first one) has already been consumed by allocate_variable_memory().
+
+    bytecode:  ARRAY_NEW dtype ndims dim0..dimN
+               (<expr> ARRAY_INIT leaf-position) * count
                MUTABLE_VAR mut
                DEFINE_ARRAY name
 */
 static void allocate_array_memory(bool is_mutable)
 {
-    bool   has_size = false;
-    size_t declared = 0;
+    ArrayShape shape;
+    shape.ndims = 0;
 
-    if (check(TOKEN_NUMBER)) {
-        advance();
+    bool   infer_first = false;
+    size_t known_total = 1;
 
-        char buffer[32];
-        if (parser.previous.length >= (int)sizeof(buffer)) {
-            error("Array size is too large.");
+    for (;;) {
+        if (shape.ndims >= ARRAY_MAX_DIMS) {
+            error("Too many array dimensions (max 8).");
             return;
         }
-        memcpy(buffer, parser.previous.start, (size_t)parser.previous.length);
-        buffer[parser.previous.length] = '\0';
 
-        unsigned long long n = strtoull(buffer, NULL, 10);
-        if (n == 0 || n > ARRAY_MAX_LENGTH) {
-            error("Array size must be between 1 and 1000000.");
-            return;
+        if (check(TOKEN_NUMBER)) {
+            advance();
+
+            char buffer[32];
+            if (parser.previous.length >= (int)sizeof(buffer)) {
+                error("Array size is too large.");
+                return;
+            }
+            memcpy(buffer, parser.previous.start, (size_t)parser.previous.length);
+            buffer[parser.previous.length] = '\0';
+
+            unsigned long long n = strtoull(buffer, NULL, 10);
+            if (n == 0 || n > ARRAY_MAX_LENGTH) {
+                error("Array size must be between 1 and 1000000.");
+                return;
+            }
+            if (known_total > ARRAY_MAX_LENGTH / n) {
+                error("Array is too large (max 1000000 elements in total).");
+                return;
+            }
+
+            known_total *= (size_t)n;
+            shape.dims[shape.ndims++] = (size_t)n;
         }
-        declared = (size_t)n;
-        has_size = true;
+        else {
+            if (shape.ndims != 0) {
+                error_at_current("Only the first dimension can be empty: write mem slot[][3] ...");
+                return;
+            }
+            infer_first = true;
+            shape.dims[shape.ndims++] = 0;
+        }
+
+        consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array size.");
+        if (parser.hadError)
+            return;
+
+        if (!match(TOKEN_LEFT_BRACKET))
+            break;
     }
 
-    consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array size.");
+    shape.stride[shape.ndims - 1] = 1;
+    for (int d = shape.ndims - 2; d >= 0; d--)
+        shape.stride[d] = shape.stride[d + 1] * shape.dims[d + 1];
 
     if (!is_datatype_token(parser.current.type)) {
         error_at_current("Expected a datatype (e.g. _8byteU) after 'slot[]' / 'const[]'.");
@@ -538,50 +643,35 @@ static void allocate_array_memory(bool is_mutable)
         return;
 
     uint8_t dtype_index = string_constant(dtype_token.start, (size_t)dtype_token.length);
-    uint8_t size_index  = make_constant(_8byteU((uint64_t)declared));   /* patched below if size is inferred */
 
-    emit_bytes(OP_ARRAY_NEW, size_index);
-    emit_byte(dtype_index);
+    emit_bytes(OP_ARRAY_NEW, dtype_index);
+    emit_byte((uint8_t)shape.ndims);
 
-    size_t count = 0;
+    int dims_offset = current_chunk()->count;          /* where dim0 lives (patched if inferred) */
+    for (int d = 0; d < shape.ndims; d++)
+        emit_u32((uint32_t)shape.dims[d]);
 
     if (match(TOKEN_EQUAL)) {
-        consume(TOKEN_LEFT_BRACE, "Expect '{' to start the array initializer.");
+        size_t count0 = array_initializer(&shape, 0, 0, infer_first);
 
-        if (!check(TOKEN_RIGHT_BRACE)) {
-            do {
-                expression();
-                emit_byte(OP_ARRAY_INIT);
-                count++;
-            } while (!parser.hadError && match(TOKEN_COMMA));
+        if (parser.hadError)
+            return;
+
+        if (infer_first) {
+            if (count0 == 0) {
+                error("Cannot infer the size of an empty array; write mem slot[N] ...");
+                return;
+            }
+            patch_u32(dims_offset, (uint32_t)count0);
         }
-
-        consume(TOKEN_RIGHT_BRACE, "Expect '}' after array initializer.");
     }
-    else if (!has_size) {
+    else if (infer_first) {
         error_at_current("An array declared with [] needs an initializer: = {...}.");
         return;
     }
 
     if (parser.hadError)
         return;
-
-    if (!has_size) {
-        if (count == 0) {
-            error("Cannot infer the size of an empty array; write mem slot[N] ...");
-            return;
-        }
-        if (count > ARRAY_MAX_LENGTH) {
-            error("Array initializer is too long.");
-            return;
-        }
-        /* size was unknown when ARRAY_NEW was emitted: fix the constant now */
-        current_chunk()->constants.values[size_index] = _8byteU((uint64_t)count);
-    }
-    else if (count > declared) {
-        error("Too many initializers for this array size.");
-        return;
-    }
 
     const char *mutability = is_mutable ? "mutable" : "constant";
 
@@ -591,6 +681,7 @@ static void allocate_array_memory(bool is_mutable)
     emit_bytes(OP_MUTABLE_VAR,  mut_index);
     emit_bytes(OP_DEFINE_ARRAY, name_index);
 }
+/* ===== END MULTIDIM ===== */
 /* ===== END ARRAY ===== */
 
 static void allocate_variable_memory(void)
@@ -1068,6 +1159,9 @@ static void assignment_statement(void)
     name[i] += expr      ->  GET name  <i>  DUP2 ARRAY_GET <expr> ADD  ARRAY_SET
     name[i] -= expr      ->  GET name  <i>  DUP2 ARRAY_GET <expr> SUB  ARRAY_SET
 */
+/* ===== MULTIDIM (new/changed) ===== */
+/*  name[i][j]...  (= | += | -=)  expr
+    every index except the last descends one dimension with ARRAY_GET */
 static void indexed_assignment_statement(void)
 {
     advance();                                   /* array name */
@@ -1075,9 +1169,16 @@ static void indexed_assignment_statement(void)
     uint8_t name_index = string_constant(name.start, (size_t)name.length);
     emit_bytes(OP_GET_VARIBLE, name_index);
 
-    advance();                                   /* '[' */
+    advance();                                   /* first '[' */
     expression();                                /* index */
     consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array index.");
+
+    while (check(TOKEN_LEFT_BRACKET)) {          /* a[i][j]: step into a[i], then index j */
+        emit_byte(OP_ARRAY_GET);
+        advance();
+        expression();
+        consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array index.");
+    }
 
     TokenType op = parser.current.type;
     if (!is_assign_op(op)) {
@@ -1098,6 +1199,7 @@ static void indexed_assignment_statement(void)
 
     emit_byte(OP_ARRAY_SET);
 }
+/* ===== END MULTIDIM ===== */
 /* ===== END ARRAY ===== */
 
 static void statement(void)

@@ -37,8 +37,8 @@ typedef enum {
     OP_TO_BOOL,               // turn top of stack into a bool (used by && and ||)
 
     // ===== ARRAY (new) =====
-    OP_ARRAY_NEW,             // size-const, dtype-const : push a new zero-filled array
-    OP_ARRAY_INIT,            // pop value, store it in the next free slot (array stays on stack)
+    OP_ARRAY_NEW,             // dtype-const, ndims, ndims x u32 dim : push a new zero-filled array (MULTIDIM changed)
+    OP_ARRAY_INIT,            // u32 flat-index : pop value, store it at that leaf position (array stays on stack) (MULTIDIM changed)
     OP_DEFINE_ARRAY,          // name-const : pop mutability + array, define the variable
     OP_ARRAY_GET,             // pop index, pop array, push element
     OP_ARRAY_SET,             // pop value, pop index, pop array, store element

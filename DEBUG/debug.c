@@ -140,16 +140,33 @@ int disassemble_instruction(Chunk *chunk, int offset) {
         return simple_instruction("OP_TO_BOOL", offset);
 
     /* ===== ARRAY (new) ===== */
+    /* ===== MULTIDIM (new/changed) ===== */
     case OP_ARRAY_NEW: {
-        Value size = chunk->constants.values[chunk->code[offset + 1]];
-        Value type = chunk->constants.values[chunk->code[offset + 2]];
-        printf("OP_ARRAY_NEW size=%llu type=%s\n",
-               (unsigned long long)size.value._8byteU, type.value._string);
-        return offset + 3;
+        Value type = chunk->constants.values[chunk->code[offset + 1]];
+        int ndims  = chunk->code[offset + 2];
+
+        printf("OP_ARRAY_NEW type=%s dims=", type.value._string);
+        for (int d = 0; d < ndims; d++) {
+            int at = offset + 3 + 4 * d;
+            uint32_t dim = ((uint32_t)chunk->code[at]     << 24) |
+                           ((uint32_t)chunk->code[at + 1] << 16) |
+                           ((uint32_t)chunk->code[at + 2] << 8)  |
+                            (uint32_t)chunk->code[at + 3];
+            printf("[%u]", dim);
+        }
+        printf("\n");
+        return offset + 3 + 4 * ndims;
     }
 
-    case OP_ARRAY_INIT:
-        return simple_instruction("OP_ARRAY_INIT", offset);
+    case OP_ARRAY_INIT: {
+        uint32_t leaf = ((uint32_t)chunk->code[offset + 1] << 24) |
+                        ((uint32_t)chunk->code[offset + 2] << 16) |
+                        ((uint32_t)chunk->code[offset + 3] << 8)  |
+                         (uint32_t)chunk->code[offset + 4];
+        printf("OP_ARRAY_INIT leaf=%u\n", leaf);
+        return offset + 5;
+    }
+    /* ===== END MULTIDIM ===== */
 
     case OP_DEFINE_ARRAY:
         return constant_instruction("OP_DEFINE_ARRAY", offset, chunk);

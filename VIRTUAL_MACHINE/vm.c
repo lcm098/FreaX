@@ -122,12 +122,60 @@ static bool array_slot(Value array, Value index, ArrayObj **out_array, size_t *o
 }
 /* ===== END ARRAY ===== */
 
+/* ===== MULTIDIM (new/changed) ===== */
+/* builds the nested ArrayObj structure, every leaf set to `zero` */
+static ArrayObj *build_array(dtype elem_type, const size_t *dims, int ndims,
+                             int level, Value zero)
+{
+    bool leaf = (level == ndims - 1);
+
+    ArrayObj *arr = new_array(leaf ? elem_type : _array, dims[level]);
+    if (arr == NULL)
+        return NULL;
+
+    if (leaf) {
+        for (size_t i = 0; i < arr->length; i++)
+            arr->items[i] = zero;
+        return arr;
+    }
+
+    for (size_t i = 0; i < dims[level]; i++) {
+        ArrayObj *child = build_array(elem_type, dims, ndims, level + 1, zero);
+
+        if (child == NULL) {
+            arr->length = i;          /* free only what was built so far */
+            free_array(arr);
+            return NULL;
+        }
+        arr->items[i] = _array(child);
+    }
+
+    arr->total = arr->length * arr->items[0].value._array->total;
+    return arr;
+}
+
+/* mem const[]: every dimension becomes read-only */
+static void mark_readonly(ArrayObj *arr)
+{
+    arr->readonly = true;
+
+    if (arr->elem_type == _array) {
+        for (size_t i = 0; i < arr->length; i++)
+            mark_readonly(arr->items[i].value._array);
+    }
+}
+/* ===== END MULTIDIM ===== */
+
 static InterpretResult run(void) {
 
 #define READ_BYTE() (*vm.ip++)
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
 #define READ_SHORT() \
     (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
+/* MULTIDIM (new) */
+#define READ_U32() \
+    (vm.ip += 4, (uint32_t)(((uint32_t)vm.ip[-4] << 24) | ((uint32_t)vm.ip[-3] << 16) | \
+                            ((uint32_t)vm.ip[-2] << 8)  |  (uint32_t)vm.ip[-1]))
 
 /*
    Promotion rules:
@@ -345,9 +393,24 @@ do {                                                                        \
         }
 
         /* ===== ARRAY (new) ===== */
+        /* ===== MULTIDIM (new/changed) ===== */
         case OP_ARRAY_NEW: {
-            Value size_value = READ_CONSTANT();
             Value type_value = READ_CONSTANT();
+            int   ndims      = READ_BYTE();
+
+            if (ndims < 1 || ndims > ARRAY_MAX_DIMS) {
+                fprintf(stderr, "Runtime error: bad array dimension count.\n");
+                return INTERPRET_RUNTIME_ERROR;
+            }
+
+            size_t dims[ARRAY_MAX_DIMS];
+            for (int d = 0; d < ndims; d++) {
+                dims[d] = READ_U32();
+                if (dims[d] == 0) {
+                    fprintf(stderr, "Runtime error: array dimension cannot be 0.\n");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+            }
 
             dtype elem_type;
             if (!dtype_from_name(type_value.value._string, &elem_type)) {
@@ -366,38 +429,53 @@ do {                                                                        \
                 return INTERPRET_RUNTIME_ERROR;
             }
 
-            size_t length = (size_t)size_value.value._8byteU;
-            ArrayObj *arr = new_array(elem_type, length);
+            ArrayObj *arr = build_array(elem_type, dims, ndims, 0, zero);
             if (arr == NULL) {
                 fprintf(stderr, "Runtime error: out of memory for array.\n");
                 return INTERPRET_RUNTIME_ERROR;
             }
-
-            for (size_t i = 0; i < length; i++)
-                arr->items[i] = zero;
 
             push(_array(arr));
             break;
         }
 
         case OP_ARRAY_INIT: {
+            uint32_t flat = READ_U32();                /* leaf position, row-major */
             Value value   = pop();
-            ArrayObj *arr = vm.stack_top[-1].value._array;   /* array stays on the stack */
+
+            ArrayObj *root = vm.stack_top[-1].value._array;   /* stays on the stack */
+            ArrayObj *arr  = root;
+            size_t    rest = flat;
+
+            /* walk down the dimensions to the leaf array */
+            while (arr->elem_type == _array) {
+                size_t stride = arr->items[0].value._array->total;
+                size_t i      = rest / stride;
+                rest          = rest % stride;
+
+                if (i >= arr->length) {
+                    fprintf(stderr, "Runtime error: array initializer is out of range.\n");
+                    free_array(root);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                arr = arr->items[i].value._array;
+            }
 
             Value stored;
             const char *why = "";
 
-            if (arr->init_next >= arr->length ||
+            if (rest >= arr->length ||
                 !convert_value(value, arr->elem_type, &stored, &why)) {
-                fprintf(stderr, "Runtime error: array element %zu: %s.\n",
-                        arr->init_next, arr->init_next >= arr->length ? "too many initializers" : why);
-                free_array(arr);
+                fprintf(stderr, "Runtime error: array element %u: %s.\n",
+                        (unsigned)flat, rest >= arr->length ? "out of range" : why);
+                free_array(root);
                 return INTERPRET_RUNTIME_ERROR;
             }
 
-            arr->items[arr->init_next++] = stored;
+            arr->items[rest] = stored;
             break;
         }
+        /* ===== END MULTIDIM ===== */
 
         case OP_DEFINE_ARRAY: {
             Value name       = READ_CONSTANT();
@@ -405,7 +483,8 @@ do {                                                                        \
             Value array      = pop();
 
             bool is_const = strcmp(which_type.value._string, "constant") == 0;
-            array.value._array->readonly = is_const;
+            if (is_const)                                   /* MULTIDIM (changed) */
+                mark_readonly(array.value._array);
 
             if (!add_entry(vm.current_environment, array, name.value._string,
                            is_const, _array)) {
@@ -585,6 +664,7 @@ do {                                                                        \
 #undef BINARY_OP
 #undef COMPARE_OP
 #undef READ_SHORT
+#undef READ_U32
 }
 
 /* ------------------------------------------------------------------ */
